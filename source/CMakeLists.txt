@@ -6,6 +6,8 @@ add_custom_target(copy_data ALL
 
 add_executable(vxgi
     main.cpp
+    renderer.cpp
+    context.cpp
 )
 
 target_compile_options(vxgi

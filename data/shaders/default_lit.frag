@@ -15,10 +15,10 @@ layout(location=0) in FS_IN {
 #include "global_set"
 layout(set=1, binding=0) uniform texture3D voxel_radiance;
 layout(set=1, binding=1) uniform sampler voxel_sampler;
-layout(set=1, binding=2) uniform textureCube cube_depth_map;
-layout(set=2, binding=1) uniform sampler sampler1;
-layout(set=2, binding=2) uniform texture2D diffuseTexture;
-layout(set=2, binding=3) uniform texture2D tex_normal;
+// layout(set=1, binding=2) uniform textureCube cube_depth_map;
+// layout(set=2, binding=1) uniform sampler sampler1;
+// layout(set=2, binding=2) uniform texture2D diffuseTexture;
+// layout(set=2, binding=3) uniform texture2D tex_normal;
 
 // const uint num_cones = 5;
 // const vec3 ConeVectors[5] = vec3[5](
