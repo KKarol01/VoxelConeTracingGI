@@ -1,0 +1,355 @@
+{
+	"configurations" : 
+	[
+		{
+			"directories" : 
+			[
+				{
+					"build" : ".",
+					"childIndexes" : 
+					[
+						1,
+						3,
+						4,
+						6,
+						7,
+						8,
+						9
+					],
+					"hasInstallRule" : true,
+					"jsonFile" : "directory-.-Debug-d0094a50bb2071803777.json",
+					"minimumCMakeVersion" : 
+					{
+						"string" : "3.6"
+					},
+					"projectIndex" : 0,
+					"source" : ".",
+					"targetIndexes" : 
+					[
+						4,
+						7
+					]
+				},
+				{
+					"build" : "third_party/glm",
+					"childIndexes" : 
+					[
+						2
+					],
+					"jsonFile" : "directory-third_party.glm-Debug-c6a2a1eb287ba6240828.json",
+					"minimumCMakeVersion" : 
+					{
+						"string" : "3.6"
+					},
+					"parentIndex" : 0,
+					"projectIndex" : 1,
+					"source" : "third_party/glm"
+				},
+				{
+					"build" : "third_party/glm/glm",
+					"jsonFile" : "directory-third_party.glm.glm-Debug-89d485164ddb30c4f8eb.json",
+					"minimumCMakeVersion" : 
+					{
+						"string" : "3.6"
+					},
+					"parentIndex" : 1,
+					"projectIndex" : 1,
+					"source" : "third_party/glm/glm",
+					"targetIndexes" : 
+					[
+						2
+					]
+				},
+				{
+					"build" : "third_party/vk-bootstrap",
+					"jsonFile" : "directory-third_party.vk-bootstrap-Debug-a980d9617bc3d007758b.json",
+					"minimumCMakeVersion" : 
+					{
+						"string" : "3.15"
+					},
+					"parentIndex" : 0,
+					"projectIndex" : 2,
+					"source" : "third_party/vk-bootstrap",
+					"targetIndexes" : 
+					[
+						6
+					]
+				},
+				{
+					"build" : "third_party/glfw",
+					"childIndexes" : 
+					[
+						5
+					],
+					"jsonFile" : "directory-third_party.glfw-Debug-897d190e8845e0568fcd.json",
+					"minimumCMakeVersion" : 
+					{
+						"string" : "3.4"
+					},
+					"parentIndex" : 0,
+					"projectIndex" : 3,
+					"source" : "third_party/glfw"
+				},
+				{
+					"build" : "third_party/glfw/src",
+					"jsonFile" : "directory-third_party.glfw.src-Debug-e43329f9a754c0ffb639.json",
+					"minimumCMakeVersion" : 
+					{
+						"string" : "3.4"
+					},
+					"parentIndex" : 4,
+					"projectIndex" : 3,
+					"source" : "third_party/glfw/src",
+					"targetIndexes" : 
+					[
+						1,
+						5
+					]
+				},
+				{
+					"build" : "third_party/spdlog",
+					"jsonFile" : "directory-third_party.spdlog-Debug-b80ecc8cb2b33b9efe59.json",
+					"minimumCMakeVersion" : 
+					{
+						"string" : "3.11"
+					},
+					"parentIndex" : 0,
+					"projectIndex" : 4,
+					"source" : "third_party/spdlog",
+					"targetIndexes" : 
+					[
+						3
+					]
+				},
+				{
+					"build" : "third_party/VulkanMemoryAllocator",
+					"jsonFile" : "directory-third_party.VulkanMemoryAllocator-Debug-22351c79e7ba9c35deb2.json",
+					"minimumCMakeVersion" : 
+					{
+						"string" : "3.15"
+					},
+					"parentIndex" : 0,
+					"projectIndex" : 5,
+					"source" : "third_party/VulkanMemoryAllocator"
+				},
+				{
+					"build" : "third_party/fastgltf",
+					"hasInstallRule" : true,
+					"jsonFile" : "directory-third_party.fastgltf-Debug-4b9fbf69ae5c81f01bd6.json",
+					"minimumCMakeVersion" : 
+					{
+						"string" : "3.12"
+					},
+					"parentIndex" : 0,
+					"projectIndex" : 6,
+					"source" : "third_party/fastgltf",
+					"targetIndexes" : 
+					[
+						0
+					]
+				},
+				{
+					"build" : "source",
+					"jsonFile" : "directory-source-Debug-be4710394502bfacce20.json",
+					"minimumCMakeVersion" : 
+					{
+						"string" : "3.6"
+					},
+					"parentIndex" : 0,
+					"projectIndex" : 7,
+					"source" : "source",
+					"targetIndexes" : 
+					[
+						8
+					]
+				}
+			],
+			"name" : "Debug",
+			"projects" : 
+			[
+				{
+					"childIndexes" : 
+					[
+						1,
+						2,
+						3,
+						4,
+						5,
+						6,
+						7
+					],
+					"directoryIndexes" : 
+					[
+						0
+					],
+					"name" : "setup",
+					"targetIndexes" : 
+					[
+						4,
+						7
+					]
+				},
+				{
+					"directoryIndexes" : 
+					[
+						1,
+						2
+					],
+					"name" : "glm",
+					"parentIndex" : 0,
+					"targetIndexes" : 
+					[
+						2
+					]
+				},
+				{
+					"directoryIndexes" : 
+					[
+						3
+					],
+					"name" : "VulkanBootstrap",
+					"parentIndex" : 0,
+					"targetIndexes" : 
+					[
+						6
+					]
+				},
+				{
+					"directoryIndexes" : 
+					[
+						4,
+						5
+					],
+					"name" : "GLFW",
+					"parentIndex" : 0,
+					"targetIndexes" : 
+					[
+						1,
+						5
+					]
+				},
+				{
+					"directoryIndexes" : 
+					[
+						6
+					],
+					"name" : "spdlog",
+					"parentIndex" : 0,
+					"targetIndexes" : 
+					[
+						3
+					]
+				},
+				{
+					"directoryIndexes" : 
+					[
+						7
+					],
+					"name" : "VMA",
+					"parentIndex" : 0
+				},
+				{
+					"directoryIndexes" : 
+					[
+						8
+					],
+					"name" : "fastgltf",
+					"parentIndex" : 0,
+					"targetIndexes" : 
+					[
+						0
+					]
+				},
+				{
+					"directoryIndexes" : 
+					[
+						9
+					],
+					"name" : "vxgi",
+					"parentIndex" : 0,
+					"targetIndexes" : 
+					[
+						8
+					]
+				}
+			],
+			"targets" : 
+			[
+				{
+					"directoryIndex" : 8,
+					"id" : "fastgltf::@0f1f61e43472035675cd",
+					"jsonFile" : "target-fastgltf-Debug-3ee45771e1f200e6d72b.json",
+					"name" : "fastgltf",
+					"projectIndex" : 6
+				},
+				{
+					"directoryIndex" : 5,
+					"id" : "glfw::@d5fdcda1ec52eb23cf38",
+					"jsonFile" : "target-glfw-Debug-bfccc585687fb83c7d89.json",
+					"name" : "glfw",
+					"projectIndex" : 3
+				},
+				{
+					"directoryIndex" : 2,
+					"id" : "glm::@ba12ce015dbd771cf20f",
+					"jsonFile" : "target-glm-Debug-198375a0828f1b2ef409.json",
+					"name" : "glm",
+					"projectIndex" : 1
+				},
+				{
+					"directoryIndex" : 6,
+					"id" : "spdlog::@a773060f2b7ab8fa67f8",
+					"jsonFile" : "target-spdlog-Debug-eeb3c06bddfd6b741d66.json",
+					"name" : "spdlog",
+					"projectIndex" : 4
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "stb::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-stb-Debug-8f2c3a75c466ccd9ddbe.json",
+					"name" : "stb",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 5,
+					"id" : "update_mappings::@d5fdcda1ec52eb23cf38",
+					"jsonFile" : "target-update_mappings-Debug-d982bdfcc54b600a1e9b.json",
+					"name" : "update_mappings",
+					"projectIndex" : 3
+				},
+				{
+					"directoryIndex" : 3,
+					"id" : "vk-bootstrap::@d3262da0f5d85e4a48e7",
+					"jsonFile" : "target-vk-bootstrap-Debug-a89ac1d511b8fd8fea42.json",
+					"name" : "vk-bootstrap",
+					"projectIndex" : 2
+				},
+				{
+					"directoryIndex" : 0,
+					"id" : "vma::@6890427a1f51a3e7e1df",
+					"jsonFile" : "target-vma-Debug-9980f0318cec07710229.json",
+					"name" : "vma",
+					"projectIndex" : 0
+				},
+				{
+					"directoryIndex" : 9,
+					"id" : "vxgi::@411ffd8adc737496fe19",
+					"jsonFile" : "target-vxgi-Debug-c09bf313e419566750b6.json",
+					"name" : "vxgi",
+					"projectIndex" : 7
+				}
+			]
+		}
+	],
+	"kind" : "codemodel",
+	"paths" : 
+	{
+		"build" : "C:/Users/k/Desktop/vxgi/build",
+		"source" : "C:/Users/k/Desktop/vxgi"
+	},
+	"version" : 
+	{
+		"major" : 2,
+		"minor" : 7
+	}
+}
