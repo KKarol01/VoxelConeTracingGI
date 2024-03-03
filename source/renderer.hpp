@@ -1,7 +1,7 @@
 #pragma once
-
 #include "types.hpp"
 #include "context.hpp"
+#include "input.hpp"
 #include <vk_mem_alloc.h>
 #include <vulkan/vulkan.hpp>
 #include <GLFW/glfw3.h>
@@ -151,6 +151,30 @@ struct Scene {
     GpuBuffer* index_buffer;
 };
 
+struct TextureStorage {
+    vk::ImageType type;
+    u32 width, height, depth;
+    u32 mips, layers;
+    vk::Format format;
+    vk::ImageLayout current_layout;
+    vk::Image image;
+    VmaAllocation alloc;
+};
+
+struct Texture2D {
+    Texture2D() = default;
+    Texture2D(u32 width, u32 height, vk::Format format, u32 mips, vk::ImageUsageFlags usage); 
+
+    TextureStorage* storage{};
+};
+
+struct Texture3D {
+    Texture3D() = default;
+    Texture3D(u32 width, u32 height, u32 depth, vk::Format format, u32 mips, vk::ImageUsageFlags usage); 
+
+    TextureStorage* storage{};
+};
+
 template<typename VkObject> struct VulkanObjectType;
 template<> struct VulkanObjectType<vk::SwapchainKHR> { static inline constexpr vk::ObjectType type = vk::ObjectType::eSwapchainKHR; };
 template<> struct VulkanObjectType<vk::CommandPool> { static inline constexpr vk::ObjectType type = vk::ObjectType::eCommandPool; };
@@ -163,6 +187,8 @@ template<> struct VulkanObjectType<vk::PipelineLayout> { static inline constexpr
 template<> struct VulkanObjectType<vk::ShaderModule> { static inline constexpr vk::ObjectType type = vk::ObjectType::eShaderModule; };
 template<> struct VulkanObjectType<vk::DescriptorSetLayout> { static inline constexpr vk::ObjectType type = vk::ObjectType::eDescriptorSetLayout; };
 template<> struct VulkanObjectType<vk::DescriptorPool> { static inline constexpr vk::ObjectType type = vk::ObjectType::eDescriptorPool; };
+template<> struct VulkanObjectType<vk::Image> { static inline constexpr vk::ObjectType type = vk::ObjectType::eImage; };
+template<> struct VulkanObjectType<vk::ImageView> { static inline constexpr vk::ObjectType type = vk::ObjectType::eImageView; };
 
 template<typename T> void set_debug_name(vk::Device device, T object, std::string_view name);
 
@@ -174,13 +200,37 @@ public:
 
     void setup_scene();
 
+    void draw();
+
+    TextureStorage* create_texture_storage(const vk::ImageCreateInfo& image_info) {
+        VmaAllocationCreateInfo alloc_info = {};
+        alloc_info.usage = VMA_MEMORY_USAGE_AUTO;
+        
+        VkImage image;
+        VmaAllocation alloc;
+        VmaAllocationInfo alloc_i;
+        vmaCreateImage(vma, (VkImageCreateInfo*)&image_info, &alloc_info, &image, &alloc, &alloc_i);
+
+        texture_storages.push_back(new TextureStorage{});
+        auto& ts = *texture_storages.back();
+        ts.type = image_info.imageType;
+        ts.width = image_info.extent.width;
+        ts.height = image_info.extent.height;
+        ts.depth = image_info.extent.depth;
+        ts.mips = image_info.mipLevels;
+        ts.layers = image_info.arrayLayers;
+        ts.format = image_info.format;
+        ts.current_layout = vk::ImageLayout::eUndefined;
+        ts.image = image;
+        ts.alloc = alloc;
+
+        return &ts;
+    }
+
 private:
     bool initialize_vulkan();
-
     bool initialize_swapchain();
-
     bool initialize_frame_resources();
-
     bool initialize_render_passes();
 
     template<typename T> GpuBuffer* create_buffer(std::string_view label, vk::BufferUsageFlags usage, std::span<T> data) {
@@ -212,7 +262,6 @@ private:
     }
 
     FrameResources& get_frame_res() { return frames.at(frame_number % FRAMES_IN_FLIGHT); }
-
     std::vector<u32> compile_shader(std::string_view filename, std::string_view file);
 
 public:
@@ -235,11 +284,8 @@ public:
     vk::Format swapchain_format;
     std::array<FrameResources, FRAMES_IN_FLIGHT> frames{};
     std::vector<GpuBuffer*> buffers;
+    std::vector<TextureStorage*> texture_storages;
     
-    vk::Pipeline pp_default_lit;
-    vk::Pipeline pp_voxelize;
-    vk::Pipeline pp_merge_voxels;
-
     vk::DescriptorSetLayout global_set_layout;
     vk::DescriptorSetLayout default_lit_set_layout;
     vk::DescriptorSetLayout voxelize_set_layout;
@@ -250,9 +296,19 @@ public:
     DescriptorSet default_lit_set;
     DescriptorSet voxelize_set;
     DescriptorSet merge_voxels_set;
+
+    Texture3D voxel_albedo, voxel_normal, voxel_radiance;
+    Texture2D depth_texture;
+    vk::ImageView depth_texture_view;
+    GpuBuffer* global_buffer;
+
+    Pipeline pp_default_lit;
+    Pipeline pp_voxelize;
+    Pipeline pp_merge_voxels;
     
     std::unordered_map<std::string, Model> models;
     Scene scene;
+    Camera camera;
 };
 
 template<typename T> void set_debug_name(vk::Device device, T object, std::string_view name) {

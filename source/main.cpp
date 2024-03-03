@@ -1,4 +1,5 @@
 #include "types.hpp"
+#include "input.hpp"
 #include "context.hpp"
 #include "renderer.hpp"
 #include <vulkan/vulkan.hpp>
@@ -16,11 +17,9 @@
 #include <stack>
 #include <cstdio>
 
-
-    
-
 int main() {
     auto& ctx = get_context();
+    ctx.input = new Input{};
     ctx.renderer = new Renderer{};
 
     auto &r = *ctx.renderer;
@@ -33,5 +32,10 @@ int main() {
 
     r.load_model_from_file("gi_box", "data/models/gi_box.gltf");    
     r.setup_scene();
-    
+
+    glfwSetKeyCallback(r.window, [](GLFWwindow* window, int key, int scancode, int action, int mods) {
+        get_context().input->glfw_key_callback(key, action);
+    });
+
+    r.draw();
 }

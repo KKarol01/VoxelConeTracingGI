@@ -1,10 +1,11 @@
 #include "renderer.hpp"
-
+#include "input.hpp"
 #include <spdlog/spdlog.h>
 #include <fastgltf/core.hpp>
 #include <fastgltf/types.hpp>
 #include <fastgltf/tools.hpp>
 #include <fastgltf/glm_element_traits.hpp>
+#include <glm/gtc/matrix_transform.hpp>
 #include <VkBootstrap.h>
 #include <shaderc/shaderc.hpp>
 #include <stb/stb_include.h>
@@ -132,6 +133,10 @@ Pipeline PipelineBuilder::build_graphics(std::string_view label) {
     vk::PipelineLayout layout_ = renderer->device.createPipelineLayout(layout_info);
     set_debug_name(renderer->device, layout_, std::format("{}_layout", label));
 
+    vk::PipelineRenderingCreateInfo dynamic_rendering = {
+        {}, renderer->swapchain_format, vk::Format::eD32Sfloat,
+    };
+
     vk::GraphicsPipelineCreateInfo info{
         {},
         stages,
@@ -149,7 +154,7 @@ Pipeline PipelineBuilder::build_graphics(std::string_view label) {
         {},
         {},
         {},
-        nullptr
+        &dynamic_rendering
     };
 
     auto pipeline = renderer->device.createGraphicsPipelines({}, info).value[0];
@@ -160,6 +165,34 @@ Pipeline PipelineBuilder::build_graphics(std::string_view label) {
         .layout = layout_
     };
 } 
+
+Texture2D::Texture2D(u32 width, u32 height, vk::Format format, u32 mips, vk::ImageUsageFlags usage) {
+    storage = get_context().renderer->create_texture_storage(vk::ImageCreateInfo{
+        {},
+        vk::ImageType::e2D,
+        format,
+        {width, height, 1},
+        mips,
+        1,
+        vk::SampleCountFlagBits::e1,
+        vk::ImageTiling::eOptimal,
+        usage
+    });
+}
+
+Texture3D::Texture3D(u32 width, u32 height, u32 depth, vk::Format format, u32 mips, vk::ImageUsageFlags usage) {
+    storage = get_context().renderer->create_texture_storage(vk::ImageCreateInfo{
+        {},
+        vk::ImageType::e3D,
+        format,
+        {width, height, depth},
+        mips,
+        1,
+        vk::SampleCountFlagBits::e1,
+        vk::ImageTiling::eOptimal,
+        usage
+    });
+}
 
 bool Renderer::initialize() {
     if(!glfwInit()) {
@@ -310,6 +343,129 @@ void Renderer::setup_scene() {
     scene.index_buffer = create_buffer("scene_index_buffer", vk::BufferUsageFlagBits::eIndexBuffer, std::span{indices});
 }
 
+void Renderer::draw() {
+    while(!glfwWindowShouldClose(window)) {
+        camera.update();
+        get_context().input->update();
+        glfwPollEvents();
+
+        auto P = glm::perspectiveFov(glm::radians(75.0f), 1024.0f, 768.0f, 0.01f, 50.0f);
+        auto V = camera.view;
+        glm::mat4 global_buffer_data[] {
+            P, V
+        };
+        memcpy(global_buffer->data, global_buffer_data, sizeof(global_buffer_data));
+
+        auto& fr = get_frame_res();
+        auto& cmd = fr.cmd;
+
+        auto img = device.acquireNextImageKHR(swapchain, -1ull, fr.swapchain_semaphore).value;
+        
+        cmd.begin({vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
+
+        cmd.pipelineBarrier(
+            vk::PipelineStageFlagBits::eTopOfPipe,
+            vk::PipelineStageFlagBits::eEarlyFragmentTests,
+            {}, {}, {},
+            vk::ImageMemoryBarrier{
+                vk::AccessFlagBits::eNone,
+                vk::AccessFlagBits::eDepthStencilAttachmentWrite | vk::AccessFlagBits::eDepthStencilAttachmentRead,
+                vk::ImageLayout::eUndefined,
+                vk::ImageLayout::eDepthAttachmentOptimal,
+                {},
+                {},
+                depth_texture.storage->image,
+                {vk::ImageAspectFlagBits::eDepth, 0, 1, 0, 1}
+            }
+        );
+        cmd.pipelineBarrier(
+            vk::PipelineStageFlagBits::eTopOfPipe,
+            vk::PipelineStageFlagBits::eColorAttachmentOutput,
+            {}, {}, {},
+            vk::ImageMemoryBarrier{
+                vk::AccessFlagBits::eNone,
+                vk::AccessFlagBits::eColorAttachmentWrite,
+                vk::ImageLayout::eUndefined,
+                vk::ImageLayout::eColorAttachmentOptimal,
+                {},
+                {},
+                swapchain_images.at(img),
+                {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1}
+            }
+        );
+        
+        cmd.bindVertexBuffers(0, scene.vertex_buffer->buffer, 0ull);
+        cmd.bindIndexBuffer(scene.index_buffer->buffer, 0, vk::IndexType::eUint32);
+        cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, pp_default_lit.pipeline);
+        cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, pp_default_lit.layout, 0, global_set.set, {});
+
+        vk::RenderingAttachmentInfo color1{
+            swapchain_views.at(img),
+            vk::ImageLayout::eColorAttachmentOptimal,
+            vk::ResolveModeFlagBits::eNone,
+            {},
+            {},
+            vk::AttachmentLoadOp::eClear,
+            vk::AttachmentStoreOp::eStore,
+            vk::ClearColorValue{0.0f, 0.0f, 0.0f, 1.0f} 
+        };
+        vk::RenderingAttachmentInfo depth{
+            depth_texture_view,
+            vk::ImageLayout::eDepthAttachmentOptimal,
+            vk::ResolveModeFlagBits::eNone,
+            {},
+            {},
+            vk::AttachmentLoadOp::eClear,
+            vk::AttachmentStoreOp::eStore,
+            vk::ClearDepthStencilValue{1.0f, 0}
+        };
+
+        cmd.beginRendering(vk::RenderingInfo{
+            {},
+            {{}, {1024, 768}},
+            1,
+            0,
+            color1,
+            &depth
+        });
+
+        cmd.setViewportWithCount(vk::Viewport{0.0f, 768.0f, 1024.0f, -768.0f, 0.0f, 1.0f});
+        cmd.setScissorWithCount(vk::Rect2D{{}, {1024, 768}});
+        for(auto& gpum : scene.models) {
+            cmd.drawIndexed(gpum.index_count, 1, gpum.index_offset, gpum.vertex_offset, 0);
+        }
+        
+        cmd.endRendering();
+
+        cmd.pipelineBarrier(
+            vk::PipelineStageFlagBits::eColorAttachmentOutput,
+            vk::PipelineStageFlagBits::eBottomOfPipe,
+            {}, {}, {},
+            vk::ImageMemoryBarrier{
+                vk::AccessFlagBits::eColorAttachmentWrite,
+                vk::AccessFlagBits::eNone,
+                vk::ImageLayout::eColorAttachmentOptimal,
+                vk::ImageLayout::ePresentSrcKHR,
+                {},
+                {},
+                swapchain_images.at(img),
+                {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1}
+            }
+        );
+        
+        cmd.end();
+        vk::PipelineStageFlags wait_masks[] {
+            vk::PipelineStageFlagBits::eColorAttachmentOutput
+        };
+        graphics_queue.submit(vk::SubmitInfo{fr.swapchain_semaphore, wait_masks, cmd, fr.rendering_semaphore});
+        u32 image_indices[] {img};
+        presentation_queue.presentKHR(vk::PresentInfoKHR{
+            fr.rendering_semaphore, swapchain, image_indices
+        });
+        device.waitIdle();
+    }
+}
+
 bool Renderer::initialize_vulkan() {
     if(!glfwVulkanSupported()) {
         spdlog::error("Vulkan is not supported");
@@ -428,7 +584,7 @@ bool Renderer::initialize_swapchain() {
 bool Renderer::initialize_frame_resources() {
     for(u32 i=0; i<FRAMES_IN_FLIGHT; ++i) {
         frames.at(i).pool = device.createCommandPool(vk::CommandPoolCreateInfo{
-            {}, graphics_queue_idx
+            vk::CommandPoolCreateFlagBits::eResetCommandBuffer, graphics_queue_idx
         });
         frames.at(i).cmd = device.allocateCommandBuffers(vk::CommandBufferAllocateInfo{
             frames.at(i).pool, vk::CommandBufferLevel::ePrimary, 1
@@ -452,10 +608,10 @@ bool Renderer::initialize_render_passes() {
     std::vector<std::filesystem::path> shader_paths{
         "default_lit.vert",
         "default_lit.frag",
-        "voxelize.vert",
-        "voxelize.geom",
-        "voxelize.frag",
-        "merge_voxels.comp",
+        // "voxelize.vert",
+        // "voxelize.geom",
+        // "voxelize.frag",
+        // "merge_voxels.comp",
     };
     std::vector<std::vector<u32>> irs(shader_paths.size()); 
     #pragma omp parallel for
@@ -478,6 +634,7 @@ bool Renderer::initialize_render_passes() {
     for(u32 i=0; const auto& ir : irs) {
         modules.at(i) = device.createShaderModule(vk::ShaderModuleCreateInfo{{}, ir.size() * sizeof(u32), ir.data()});
         set_debug_name(device, modules.at(i), shader_paths.at(i).string());
+        ++i;
     }
 
     static constexpr vk::ShaderStageFlags all_stages = 
@@ -543,6 +700,48 @@ bool Renderer::initialize_render_passes() {
     voxelize_set = DescriptorSet{device, global_desc_pool, voxelize_set_layout};
     merge_voxels_set = DescriptorSet{device, global_desc_pool, merge_voxels_set_layout};
 
+    voxel_albedo = Texture3D{256, 256, 256, vk::Format::eR32Uint, (u32)std::log2f(256.0f)+1, vk::ImageUsageFlagBits::eTransferSrc | vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled};
+    set_debug_name(device, voxel_albedo.storage->image, "voxel_albedo");
+    voxel_normal = Texture3D{256, 256, 256, vk::Format::eR32Uint, (u32)std::log2f(256.0f)+1, vk::ImageUsageFlagBits::eTransferSrc | vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled};
+    set_debug_name(device, voxel_normal.storage->image, "voxel_normal");
+    voxel_radiance = Texture3D{256, 256, 256, vk::Format::eR8G8B8A8Unorm, (u32)std::log2f(256.0f)+1, vk::ImageUsageFlagBits::eTransferSrc | vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled};
+    set_debug_name(device, voxel_radiance.storage->image, "voxel_radiance");
+    depth_texture = Texture2D{window_width, window_height, vk::Format::eD32Sfloat, 1, vk::ImageUsageFlagBits::eDepthStencilAttachment};
+    set_debug_name(device, depth_texture.storage->image, "depth_texture");
+    depth_texture_view = device.createImageView(vk::ImageViewCreateInfo{
+        {}, depth_texture.storage->image, vk::ImageViewType::e2D, depth_texture.storage->format, {}, {vk::ImageAspectFlagBits::eDepth, 0, 1, 0, 1}
+    });
+    set_debug_name(device, depth_texture_view, "depth_texture_view");
+
+    PipelineBuilder default_lit_builder{this};
+    pp_default_lit = default_lit_builder
+        .with_vertex_input(
+            {
+                vk::VertexInputBindingDescription{0, sizeof(Vertex), vk::VertexInputRate::eVertex}
+            },
+            {
+                vk::VertexInputAttributeDescription{0, 0, vk::Format::eR32G32B32Sfloat, 0},
+                vk::VertexInputAttributeDescription{1, 0, vk::Format::eR32G32B32Sfloat, 12},
+                vk::VertexInputAttributeDescription{2, 0, vk::Format::eR32G32B32Sfloat, 24},
+            })
+        .with_depth_testing(true, true, vk::CompareOp::eLess)
+        .with_culling(vk::CullModeFlagBits::eBack, vk::FrontFace::eCounterClockwise)
+        .with_shaders({
+            {vk::ShaderStageFlagBits::eVertex, modules.at(0)},
+            {vk::ShaderStageFlagBits::eFragment, modules.at(1)},
+        })
+        .with_layout(global_set_layout)
+        .with_layout(default_lit_set_layout)
+        .build_graphics("default_lit_pipeline");
+
+    glm::mat4 global_buffer_size[2];
+    global_buffer = create_buffer("global_ubo", vk::BufferUsageFlagBits::eUniformBuffer, std::span{global_buffer_size, 2});
+
+    DescriptorInfo global_set_infos[] {
+        DescriptorInfo{vk::DescriptorType::eUniformBuffer, global_buffer->buffer, 0, vk::WholeSize},
+    };
+    global_set.update_bindings(device, 0, 0, global_set_infos);
+
     return true;
 }
 
@@ -550,7 +749,7 @@ std::vector<u32> Renderer::compile_shader(std::string_view filename, std::string
     shaderc::Compiler compiler;
     auto result = compiler.CompileGlslToSpv(file.data(), shaderc_glsl_infer_from_source, filename.data());
     if(result.GetCompilationStatus() != shaderc_compilation_status_success) {
-        spdlog::error("Shader compilation error: {}", result.GetErrorMessage().c_str());
+        spdlog::error("Shader {} compilation error: {}", filename, result.GetErrorMessage().c_str());
         return {};
     }
 

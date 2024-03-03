@@ -8,6 +8,7 @@ add_executable(vxgi
     main.cpp
     renderer.cpp
     context.cpp
+    input.cpp
 )
 
 target_compile_options(vxgi
