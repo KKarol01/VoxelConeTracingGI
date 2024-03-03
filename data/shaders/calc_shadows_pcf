@@ -1,0 +1,15 @@
+float calc_shadows_pcf() {
+    float shadow = 0.0;
+    vec2 texel_size = 1.0 / textureSize(samplerCube(depth_cube, depth_cube_sampler), 0).xy;
+    PointLight pl = point_lights[0];
+    for(int i=-1; i<=1; ++i) {
+        for(int j=-1; j<=1; ++j) {
+            vec3 coord = frag.position - pl.pos;
+            coord.xy += vec2(i, j) * texel_size;
+            float d = texture(samplerCube(depth_cube, depth_cube_sampler), coord).r;
+            shadow += d*25.0 > length(frag.position - pl.pos) ? 1.0 : 0.0;
+        }
+    }
+    
+    return shadow / 9.0;
+}

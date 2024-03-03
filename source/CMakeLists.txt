@@ -10,6 +10,7 @@ add_executable(vxgi
 
 target_compile_options(vxgi
     PRIVATE
+        -fopenmp
 )
 
 target_compile_features(vxgi
@@ -27,6 +28,7 @@ target_compile_definitions(vxgi
 target_include_directories(vxgi
     PUBLIC
         $ENV{VULKAN_SDK}/include
+        ${CMAKE_SOURCE_DIR}/third_party
 )
 
 target_link_directories(vxgi
@@ -44,4 +46,6 @@ target_link_libraries(vxgi
         fastgltf
         stb
         vulkan-1
+        shaderc_sharedd
+        libomp
 )
