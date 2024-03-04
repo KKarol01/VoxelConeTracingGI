@@ -10,6 +10,7 @@ layout(location=0) in FS_IN {
     // vec2 frag_uv;
     // mat3 frag_TBN;
     vec3 frag_pos;
+    vec3 frag_normal;
     vec3 frag_color;
 };
 
@@ -217,6 +218,11 @@ void main() {
     // vec4 indirect = calculate_indirect(position, normal, albedo);
     // vec3 col = calc_direct_light()*shadow;
     // vec3 final = (col + indirect.rgb * 0.5) * indirect.a;
-    vec3 final = frag_color;
+    vec3 lpos = vec3(0.0, 0.8, 0.0);
+    vec3 dir = lpos - frag_pos;
+    float len = length(dir);
+    dir /= len;
+    vec3 final = frag_color * max(dot(frag_normal, dir), 0.0) * len;
+
     outColor = vec4(final, 1.0);
 }

@@ -11,6 +11,7 @@ layout(location=0) out VS_OUT {
     // vec2 frag_uv;
     // mat3 frag_TBN;
     vec3 frag_pos;
+    vec3 frag_normal;
     vec3 frag_color;
 };
 
@@ -23,6 +24,7 @@ void main() {
     // frag_uv = uv;
     //gl_InstanceIndex;
     frag_pos = vec3(vec4(pos, 1.0));
+    frag_normal = normal;
     frag_color = color;
 
     // vec3 bitangent = cross(normal, tangent);

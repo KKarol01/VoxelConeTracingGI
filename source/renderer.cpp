@@ -134,7 +134,7 @@ Pipeline PipelineBuilder::build_graphics(std::string_view label) {
     set_debug_name(renderer->device, layout_, std::format("{}_layout", label));
 
     vk::PipelineRenderingCreateInfo dynamic_rendering = {
-        {}, renderer->swapchain_format, vk::Format::eD32Sfloat,
+        {}, color_attachment_formats, depth_attachment_format
     };
 
     vk::GraphicsPipelineCreateInfo info{
@@ -362,6 +362,58 @@ void Renderer::draw() {
         auto img = device.acquireNextImageKHR(swapchain, -1ull, fr.swapchain_semaphore).value;
         
         cmd.begin({vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
+        cmd.bindVertexBuffers(0, scene.vertex_buffer->buffer, 0ull);
+        cmd.bindIndexBuffer(scene.index_buffer->buffer, 0, vk::IndexType::eUint32);
+
+        cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, pp_voxelize.pipeline);
+        cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, pp_default_lit.layout, 0, global_set.set, {});
+        cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, pp_voxelize.layout, 1, voxelize_set.set, {});
+
+        cmd.clearColorImage(voxel_albedo.storage->image, vk::ImageLayout::eGeneral, vk::ClearColorValue{0.0f, 0.0f, 0.0f, 0.0f}, vk::ImageSubresourceRange{vk::ImageAspectFlagBits::eColor, 0, voxel_albedo.storage->mips, 0, 1});
+        cmd.clearColorImage(voxel_normal.storage->image, vk::ImageLayout::eGeneral, vk::ClearColorValue{0.0f, 0.0f, 0.0f, 0.0f}, vk::ImageSubresourceRange{vk::ImageAspectFlagBits::eColor, 0, voxel_normal.storage->mips, 0, 1});
+        cmd.clearColorImage(voxel_radiance.storage->image, vk::ImageLayout::eGeneral, vk::ClearColorValue{0.0f, 0.0f, 0.0f, 0.0f}, vk::ImageSubresourceRange{vk::ImageAspectFlagBits::eColor, 0, voxel_radiance.storage->mips, 0, 1});
+        cmd.pipelineBarrier(
+            vk::PipelineStageFlagBits::eTransfer,
+            vk::PipelineStageFlagBits::eFragmentShader,
+            {}, {}, {},
+            vk::ImageMemoryBarrier{
+                vk::AccessFlagBits::eTransferWrite,
+                vk::AccessFlagBits::eShaderWrite | vk::AccessFlagBits::eShaderRead,
+                vk::ImageLayout::eGeneral, vk::ImageLayout::eGeneral,
+                {}, {}, voxel_albedo.storage->image, {vk::ImageAspectFlagBits::eColor, 0, voxel_albedo.storage->mips, 0, 1}});
+        cmd.pipelineBarrier(
+            vk::PipelineStageFlagBits::eTransfer,
+            vk::PipelineStageFlagBits::eFragmentShader,
+            {}, {}, {},
+            vk::ImageMemoryBarrier{
+                vk::AccessFlagBits::eTransferWrite,
+                vk::AccessFlagBits::eShaderWrite | vk::AccessFlagBits::eShaderRead,
+                vk::ImageLayout::eGeneral, vk::ImageLayout::eGeneral,
+                {}, {}, voxel_normal.storage->image, {vk::ImageAspectFlagBits::eColor, 0, voxel_normal.storage->mips, 0, 1}});
+        cmd.pipelineBarrier(
+            vk::PipelineStageFlagBits::eTransfer,
+            vk::PipelineStageFlagBits::eComputeShader,
+            {}, {}, {},
+            vk::ImageMemoryBarrier{
+                vk::AccessFlagBits::eTransferWrite,
+                vk::AccessFlagBits::eShaderWrite | vk::AccessFlagBits::eShaderRead,
+                vk::ImageLayout::eGeneral, vk::ImageLayout::eGeneral,
+                {}, {}, voxel_radiance.storage->image, {vk::ImageAspectFlagBits::eColor, 0, voxel_radiance.storage->mips, 0, 1}});
+        
+        cmd.beginRendering(vk::RenderingInfo{
+            {},
+            {{}, {256, 256}},
+            1,
+            0,
+        });
+
+            cmd.setViewportWithCount(vk::Viewport{0.0f, 0.0, 256.0, 256.0, 0.0f, 1.0f});
+            cmd.setScissorWithCount(vk::Rect2D{{}, {256, 256}});
+            for(auto& gpum : scene.models) {
+                cmd.drawIndexed(gpum.index_count, 1, gpum.index_offset, gpum.vertex_offset, 0);
+            }
+                
+        cmd.endRendering();
 
         cmd.pipelineBarrier(
             vk::PipelineStageFlagBits::eTopOfPipe,
@@ -394,11 +446,6 @@ void Renderer::draw() {
             }
         );
         
-        cmd.bindVertexBuffers(0, scene.vertex_buffer->buffer, 0ull);
-        cmd.bindIndexBuffer(scene.index_buffer->buffer, 0, vk::IndexType::eUint32);
-        cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, pp_default_lit.pipeline);
-        cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, pp_default_lit.layout, 0, global_set.set, {});
-
         vk::RenderingAttachmentInfo color1{
             swapchain_views.at(img),
             vk::ImageLayout::eColorAttachmentOptimal,
@@ -420,6 +467,7 @@ void Renderer::draw() {
             vk::ClearDepthStencilValue{1.0f, 0}
         };
 
+        cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, pp_default_lit.pipeline);
         cmd.beginRendering(vk::RenderingInfo{
             {},
             {{}, {1024, 768}},
@@ -608,9 +656,9 @@ bool Renderer::initialize_render_passes() {
     std::vector<std::filesystem::path> shader_paths{
         "default_lit.vert",
         "default_lit.frag",
-        // "voxelize.vert",
-        // "voxelize.geom",
-        // "voxelize.frag",
+        "voxelize.vert",
+        "voxelize.geom",
+        "voxelize.frag",
         // "merge_voxels.comp",
     };
     std::vector<std::vector<u32>> irs(shader_paths.size()); 
@@ -645,7 +693,6 @@ bool Renderer::initialize_render_passes() {
 
     vk::DescriptorSetLayoutBinding global_set_bindings[] {
         vk::DescriptorSetLayoutBinding{0, vk::DescriptorType::eUniformBuffer, 1, all_stages},
-        vk::DescriptorSetLayoutBinding{1, vk::DescriptorType::eStorageBuffer, 1, all_stages},
     };
 
     vk::DescriptorSetLayoutBinding default_lit_set_bindings[] {
@@ -667,9 +714,9 @@ bool Renderer::initialize_render_passes() {
     };
 
     vk::DescriptorSetLayoutCreateInfo global_set_info{{}, global_set_bindings};
-    vk::DescriptorSetLayoutCreateInfo default_lit_info{{}, global_set_bindings};
-    vk::DescriptorSetLayoutCreateInfo voxelize_info{{}, global_set_bindings};
-    vk::DescriptorSetLayoutCreateInfo merge_voxels_info{{}, global_set_bindings};
+    vk::DescriptorSetLayoutCreateInfo default_lit_info{{}, default_lit_set_bindings};
+    vk::DescriptorSetLayoutCreateInfo voxelize_info{{}, voxelize_set_bindings};
+    vk::DescriptorSetLayoutCreateInfo merge_voxels_info{{}, merge_voxels_set_bindings};
 
     vk::DescriptorPoolSize global_sizes[] {
         vk::DescriptorPoolSize{vk::DescriptorType::eSampler, 1024},
@@ -700,14 +747,33 @@ bool Renderer::initialize_render_passes() {
     voxelize_set = DescriptorSet{device, global_desc_pool, voxelize_set_layout};
     merge_voxels_set = DescriptorSet{device, global_desc_pool, merge_voxels_set_layout};
 
-    voxel_albedo = Texture3D{256, 256, 256, vk::Format::eR32Uint, (u32)std::log2f(256.0f)+1, vk::ImageUsageFlagBits::eTransferSrc | vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled};
+    voxel_albedo = Texture3D{256, 256, 256, vk::Format::eR32Uint, 1, vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eTransferSrc | vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled};
     set_debug_name(device, voxel_albedo.storage->image, "voxel_albedo");
-    voxel_normal = Texture3D{256, 256, 256, vk::Format::eR32Uint, (u32)std::log2f(256.0f)+1, vk::ImageUsageFlagBits::eTransferSrc | vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled};
+
+    auto voxel_albedo_view = device.createImageView(vk::ImageViewCreateInfo{{}, voxel_albedo.storage->image, vk::ImageViewType::e3D, voxel_albedo.storage->format, {}, {vk::ImageAspectFlagBits::eColor, 0, voxel_albedo.storage->mips, 0, 1}});
+    set_debug_name(device, voxel_albedo_view, "voxel_albedo_view");
+
+    voxel_normal = Texture3D{256, 256, 256, vk::Format::eR32Uint, 1, vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eTransferSrc | vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled};
     set_debug_name(device, voxel_normal.storage->image, "voxel_normal");
-    voxel_radiance = Texture3D{256, 256, 256, vk::Format::eR8G8B8A8Unorm, (u32)std::log2f(256.0f)+1, vk::ImageUsageFlagBits::eTransferSrc | vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled};
+
+    auto voxel_normal_view = device.createImageView(vk::ImageViewCreateInfo{{}, voxel_normal.storage->image, vk::ImageViewType::e3D, voxel_normal.storage->format, {}, {vk::ImageAspectFlagBits::eColor, 0, voxel_normal.storage->mips, 0, 1}});
+    set_debug_name(device, voxel_normal_view, "voxel_normal_view");
+
+    voxel_radiance = Texture3D{256, 256, 256, vk::Format::eR8G8B8A8Unorm, (u32)std::log2f(256.0f)+1, vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eTransferSrc | vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled};
     set_debug_name(device, voxel_radiance.storage->image, "voxel_radiance");
+
+    auto voxel_radiance_view = device.createImageView(vk::ImageViewCreateInfo{{}, voxel_radiance.storage->image, vk::ImageViewType::e3D, voxel_radiance.storage->format, {}, {vk::ImageAspectFlagBits::eColor, 0, voxel_radiance.storage->mips, 0, 1}});
+    set_debug_name(device, voxel_radiance_view, "voxel_radiance_view");
+
+    auto voxel_sampler = device.createSampler(vk::SamplerCreateInfo{
+        {}, vk::Filter::eLinear, vk::Filter::eLinear, vk::SamplerMipmapMode::eLinear,
+        vk::SamplerAddressMode::eClampToBorder, vk::SamplerAddressMode::eClampToBorder, vk::SamplerAddressMode::eClampToBorder,
+        0.0f, false, 0.0f, false, vk::CompareOp::eNever, 0.0f, (f32)voxel_albedo.storage->mips
+    });
+
     depth_texture = Texture2D{window_width, window_height, vk::Format::eD32Sfloat, 1, vk::ImageUsageFlagBits::eDepthStencilAttachment};
     set_debug_name(device, depth_texture.storage->image, "depth_texture");
+
     depth_texture_view = device.createImageView(vk::ImageViewCreateInfo{
         {}, depth_texture.storage->image, vk::ImageViewType::e2D, depth_texture.storage->format, {}, {vk::ImageAspectFlagBits::eDepth, 0, 1, 0, 1}
     });
@@ -730,9 +796,33 @@ bool Renderer::initialize_render_passes() {
             {vk::ShaderStageFlagBits::eVertex, modules.at(0)},
             {vk::ShaderStageFlagBits::eFragment, modules.at(1)},
         })
+        .with_color_attachments({swapchain_format})
+        .with_depth_attachment(vk::Format::eD32Sfloat)
         .with_layout(global_set_layout)
         .with_layout(default_lit_set_layout)
         .build_graphics("default_lit_pipeline");
+
+    PipelineBuilder voxelize_builder{this};
+    pp_voxelize = voxelize_builder
+        .with_vertex_input(
+            {
+                vk::VertexInputBindingDescription{0, sizeof(Vertex), vk::VertexInputRate::eVertex}
+            },
+            {
+                vk::VertexInputAttributeDescription{0, 0, vk::Format::eR32G32B32Sfloat, 0},
+                vk::VertexInputAttributeDescription{1, 0, vk::Format::eR32G32B32Sfloat, 12},
+                vk::VertexInputAttributeDescription{2, 0, vk::Format::eR32G32B32Sfloat, 24},
+            })
+        .with_depth_testing(false, false, vk::CompareOp::eAlways)
+        .with_culling(vk::CullModeFlagBits::eNone, vk::FrontFace::eCounterClockwise)
+        .with_shaders({
+            {vk::ShaderStageFlagBits::eVertex, modules.at(2)},
+            {vk::ShaderStageFlagBits::eGeometry, modules.at(3)},
+            {vk::ShaderStageFlagBits::eFragment, modules.at(4)},
+        })
+        .with_layout(global_set_layout)
+        .with_layout(voxelize_set_layout)
+        .build_graphics("voxelize_pipeline");
 
     glm::mat4 global_buffer_size[2];
     global_buffer = create_buffer("global_ubo", vk::BufferUsageFlagBits::eUniformBuffer, std::span{global_buffer_size, 2});
@@ -741,6 +831,64 @@ bool Renderer::initialize_render_passes() {
         DescriptorInfo{vk::DescriptorType::eUniformBuffer, global_buffer->buffer, 0, vk::WholeSize},
     };
     global_set.update_bindings(device, 0, 0, global_set_infos);
+
+    DescriptorInfo voxelize_set_infos[] {
+        DescriptorInfo{vk::DescriptorType::eStorageImage, voxel_albedo_view, vk::ImageLayout::eGeneral},
+        DescriptorInfo{vk::DescriptorType::eStorageImage, voxel_normal_view, vk::ImageLayout::eGeneral},
+        DescriptorInfo{vk::DescriptorType::eSampler, voxel_sampler},
+    };
+    voxelize_set.update_bindings(device, 0, 0, voxelize_set_infos);
+
+    get_frame_res().cmd.begin({vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
+    get_frame_res().cmd.pipelineBarrier(
+        vk::PipelineStageFlagBits::eTopOfPipe,
+        vk::PipelineStageFlagBits::eFragmentShader,
+        {}, {}, {},
+        vk::ImageMemoryBarrier{
+            vk::AccessFlagBits::eNone,
+            vk::AccessFlagBits::eShaderWrite | vk::AccessFlagBits::eShaderRead,
+            vk::ImageLayout::eUndefined,
+            vk::ImageLayout::eGeneral,
+            {},
+            {},
+            voxel_albedo.storage->image,
+            {vk::ImageAspectFlagBits::eColor, 0, voxel_albedo.storage->mips, 0, 1}
+        }
+    );
+    get_frame_res().cmd.pipelineBarrier(
+        vk::PipelineStageFlagBits::eTopOfPipe,
+        vk::PipelineStageFlagBits::eFragmentShader,
+        {}, {}, {},
+        vk::ImageMemoryBarrier{
+            vk::AccessFlagBits::eNone,
+            vk::AccessFlagBits::eShaderWrite | vk::AccessFlagBits::eShaderRead,
+            vk::ImageLayout::eUndefined,
+            vk::ImageLayout::eGeneral,
+            {},
+            {},
+            voxel_normal.storage->image,
+            {vk::ImageAspectFlagBits::eColor, 0, voxel_normal.storage->mips, 0, 1}
+        }
+    );
+    get_frame_res().cmd.pipelineBarrier(
+        vk::PipelineStageFlagBits::eTopOfPipe,
+        vk::PipelineStageFlagBits::eFragmentShader,
+        {}, {}, {},
+        vk::ImageMemoryBarrier{
+            vk::AccessFlagBits::eNone,
+            vk::AccessFlagBits::eShaderWrite | vk::AccessFlagBits::eShaderRead,
+            vk::ImageLayout::eUndefined,
+            vk::ImageLayout::eGeneral,
+            {},
+            {},
+            voxel_radiance.storage->image,
+            {vk::ImageAspectFlagBits::eColor, 0, voxel_radiance.storage->mips, 0, 1}
+        }
+    );
+        
+    get_frame_res().cmd.end();
+    graphics_queue.submit(vk::SubmitInfo{{}, {}, get_frame_res().cmd});
+    graphics_queue.waitIdle();
 
     return true;
 }

@@ -8,12 +8,10 @@
 
 
 layout(location=0) in FS_IN {
-	vec2 uv;
-	vec3 normal;
-	vec3 color;
 	vec3 position;
 	vec3 position_proj;
-	mat3 TBN;
+	vec3 normal;
+	vec3 color;
 } frag;
 
 #include "global_set"
@@ -47,9 +45,9 @@ layout(set=1, binding=0, r32ui) uniform coherent volatile uimage3D voxel_albedo;
 layout(set=1, binding=1, r32ui) uniform coherent volatile uimage3D voxel_normal;
 layout(set=1, binding=2) uniform sampler voxel_sampler;
 
-layout(set=2, binding=1) uniform sampler diff_samp;
-layout(set=2, binding=2) uniform texture2D tex_diffuse;
-layout(set=2, binding=3) uniform texture2D tex_normal;
+// layout(set=2, binding=1) uniform sampler diff_samp;
+// layout(set=2, binding=2) uniform texture2D tex_diffuse;
+// layout(set=2, binding=3) uniform texture2D tex_normal;
 // layout(binding=3) uniform samplerCube tex_shadow;
 
 // float attenuate(float, in const PointLight);
@@ -126,15 +124,15 @@ void imageAtomicRGBA8Avg(int grid_sel, ivec3 coords, vec4 val) {
 //     return cd - 0.0001 > rd ? 1.0 : 0.0;
 // }
 
-vec4 sample_diffuse_map() {
-	return texture(sampler2D(tex_diffuse, diff_samp), frag.uv).rgba;
-}
-vec3 sample_normal_map() {
-	vec3 nrm = texture(sampler2D(tex_normal, diff_samp), frag.uv).rgb;
-	nrm = nrm * 2.0 - 1.0;
-	nrm = normalize(frag.TBN * nrm);
-	return nrm;
-}
+// vec4 sample_diffuse_map() {
+// 	return texture(sampler2D(tex_diffuse, diff_samp), frag.uv).rgba;
+// }
+// vec3 sample_normal_map() {
+// 	vec3 nrm = texture(sampler2D(tex_normal, diff_samp), frag.uv).rgb;
+// 	nrm = nrm * 2.0 - 1.0;
+// 	nrm = normalize(frag.TBN * nrm);
+// 	return nrm;
+// }
 
 void main() {
 	vec3 p = abs(frag.position_proj);
@@ -159,10 +157,10 @@ void main() {
 	ivec3 pos = ivec3(256 * voxel);
 	// // pos.y += (resolution + 2) * level;
 	// // imageAtomicRGBA8Avg(pos, res);
-	vec4 frag_diff_rgba = sample_diffuse_map();
+	vec4 frag_diff_rgba = vec4(frag.color, 1.0);
 	vec3 frag_diff = frag_diff_rgba.rgb;
 	float opacity = frag_diff_rgba.a;
-	vec3 frag_nrm = sample_normal_map();
+	vec3 frag_nrm = frag.normal;
 
 	if(opacity < 1e-6) { return; }
 

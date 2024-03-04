@@ -89,6 +89,16 @@ public:
         return *this;
     }
 
+    PipelineBuilder& with_color_attachments(const std::vector<vk::Format>& formats) {
+        color_attachment_formats = formats;
+        return *this;
+    }
+
+    PipelineBuilder& with_depth_attachment(vk::Format format) {
+        depth_attachment_format = format;
+        return *this;
+    }
+
     Pipeline build_graphics(std::string_view label);
 
 private:
@@ -102,6 +112,8 @@ private:
     bool depth_write{true};
     vk::CompareOp depth_compare{vk::CompareOp::eLess};
     std::vector<vk::DescriptorSetLayout> set_layouts;
+    std::vector<vk::Format> color_attachment_formats;
+    vk::Format depth_attachment_format{vk::Format::eUndefined};
 };
 
 struct GpuBuffer {

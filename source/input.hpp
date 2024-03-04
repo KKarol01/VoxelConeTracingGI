@@ -27,6 +27,6 @@ struct Camera {
     f32 yaw{}, pitch{};
     glm::vec3 pos{-0.09, 0.27, 0.04};
     glm::vec3 speed{0.0f};
-    static inline float acceleration = 0.00002f;
+    static inline float acceleration = 0.0002f;
     static inline float max_speed = 0.01f;
 };
