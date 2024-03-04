@@ -101,6 +101,8 @@ public:
 
     Pipeline build_graphics(std::string_view label);
 
+    Pipeline build_compute(std::string_view label);
+
 private:
     const Renderer* renderer;
     std::vector<std::pair<vk::ShaderStageFlagBits, vk::ShaderModule>> shaders;

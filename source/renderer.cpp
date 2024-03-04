@@ -166,6 +166,33 @@ Pipeline PipelineBuilder::build_graphics(std::string_view label) {
     };
 } 
 
+Pipeline PipelineBuilder::build_compute(std::string_view label) {
+    vk::PipelineLayoutCreateInfo layout_info = {
+        {},
+        set_layouts,
+        {}
+    };
+
+    vk::PipelineLayout layout_ = renderer->device.createPipelineLayout(layout_info);
+    set_debug_name(renderer->device, layout_, std::format("{}_layout", label));
+    
+    vk::ComputePipelineCreateInfo info{
+        {},
+        vk::PipelineShaderStageCreateInfo{
+            {}, shaders.at(0).first, shaders.at(0).second, "main"
+        },
+        layout_
+    };
+
+    auto pipeline = renderer->device.createComputePipeline({}, info).value;
+    set_debug_name(renderer->device, pipeline, label);
+
+    return Pipeline{
+        .pipeline = pipeline,
+        .layout = layout_
+    };
+}
+
 Texture2D::Texture2D(u32 width, u32 height, vk::Format format, u32 mips, vk::ImageUsageFlags usage) {
     storage = get_context().renderer->create_texture_storage(vk::ImageCreateInfo{
         {},
@@ -182,7 +209,7 @@ Texture2D::Texture2D(u32 width, u32 height, vk::Format format, u32 mips, vk::Ima
 
 Texture3D::Texture3D(u32 width, u32 height, u32 depth, vk::Format format, u32 mips, vk::ImageUsageFlags usage) {
     storage = get_context().renderer->create_texture_storage(vk::ImageCreateInfo{
-        {},
+        vk::ImageCreateFlagBits::eMutableFormat,
         vk::ImageType::e3D,
         format,
         {width, height, depth},
@@ -415,6 +442,39 @@ void Renderer::draw() {
                 
         cmd.endRendering();
 
+        cmd.pipelineBarrier(
+            vk::PipelineStageFlagBits::eFragmentShader,
+            vk::PipelineStageFlagBits::eComputeShader,
+            {}, {}, {},
+            vk::ImageMemoryBarrier{
+                vk::AccessFlagBits::eShaderWrite,
+                vk::AccessFlagBits::eShaderRead | vk::AccessFlagBits::eShaderWrite,
+                vk::ImageLayout::eGeneral, vk::ImageLayout::eGeneral,
+                {}, {}, voxel_albedo.storage->image, {vk::ImageAspectFlagBits::eColor, 0, voxel_albedo.storage->mips, 0, 1}});
+        cmd.pipelineBarrier(
+            vk::PipelineStageFlagBits::eFragmentShader,
+            vk::PipelineStageFlagBits::eComputeShader,
+            {}, {}, {},
+            vk::ImageMemoryBarrier{
+                vk::AccessFlagBits::eShaderWrite,
+                vk::AccessFlagBits::eShaderRead | vk::AccessFlagBits::eShaderWrite,
+                vk::ImageLayout::eGeneral, vk::ImageLayout::eGeneral,
+                {}, {}, voxel_normal.storage->image, {vk::ImageAspectFlagBits::eColor, 0, voxel_normal.storage->mips, 0, 1}});
+ 
+        cmd.bindPipeline(vk::PipelineBindPoint::eCompute, pp_merge_voxels.pipeline);
+        cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, pp_merge_voxels.layout, 0, global_set.set, {});
+        cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, pp_merge_voxels.layout, 1, merge_voxels_set.set, {});
+        cmd.dispatch(256/8, 256/8, 256/8);
+
+        cmd.pipelineBarrier(
+            vk::PipelineStageFlagBits::eComputeShader,
+            vk::PipelineStageFlagBits::eFragmentShader,
+            {}, {}, {},
+            vk::ImageMemoryBarrier{
+                vk::AccessFlagBits::eShaderWrite,
+                vk::AccessFlagBits::eShaderRead,
+                vk::ImageLayout::eGeneral, vk::ImageLayout::eGeneral,
+                {}, {}, voxel_radiance.storage->image, {vk::ImageAspectFlagBits::eColor, 0, voxel_radiance.storage->mips, 0, 1}});
         cmd.pipelineBarrier(
             vk::PipelineStageFlagBits::eTopOfPipe,
             vk::PipelineStageFlagBits::eEarlyFragmentTests,
@@ -659,7 +719,7 @@ bool Renderer::initialize_render_passes() {
         "voxelize.vert",
         "voxelize.geom",
         "voxelize.frag",
-        // "merge_voxels.comp",
+        "merge_voxels.comp",
     };
     std::vector<std::vector<u32>> irs(shader_paths.size()); 
     #pragma omp parallel for
@@ -771,6 +831,12 @@ bool Renderer::initialize_render_passes() {
         0.0f, false, 0.0f, false, vk::CompareOp::eNever, 0.0f, (f32)voxel_albedo.storage->mips
     });
 
+    auto merge_albedo_view = device.createImageView(vk::ImageViewCreateInfo{{}, voxel_albedo.storage->image, vk::ImageViewType::e3D, vk::Format::eR8G8B8A8Unorm, {}, {vk::ImageAspectFlagBits::eColor, 0, voxel_albedo.storage->mips, 0, 1}});
+    set_debug_name(device, voxel_radiance_view, "merge_albedo_view");
+
+    auto merge_normal_view = device.createImageView(vk::ImageViewCreateInfo{{}, voxel_normal.storage->image, vk::ImageViewType::e3D, vk::Format::eR8G8B8A8Unorm, {}, {vk::ImageAspectFlagBits::eColor, 0, voxel_normal.storage->mips, 0, 1}});
+    set_debug_name(device, voxel_radiance_view, "merge_normal_view");
+
     depth_texture = Texture2D{window_width, window_height, vk::Format::eD32Sfloat, 1, vk::ImageUsageFlagBits::eDepthStencilAttachment};
     set_debug_name(device, depth_texture.storage->image, "depth_texture");
 
@@ -824,6 +890,15 @@ bool Renderer::initialize_render_passes() {
         .with_layout(voxelize_set_layout)
         .build_graphics("voxelize_pipeline");
 
+    PipelineBuilder merge_voxels_builder{this};
+    pp_merge_voxels = merge_voxels_builder
+        .with_shaders({
+            {vk::ShaderStageFlagBits::eCompute, modules.at(5)},
+        })
+        .with_layout(global_set_layout)
+        .with_layout(merge_voxels_set_layout)
+        .build_compute("merge_voxels_pipeline");
+
     glm::mat4 global_buffer_size[2];
     global_buffer = create_buffer("global_ubo", vk::BufferUsageFlagBits::eUniformBuffer, std::span{global_buffer_size, 2});
 
@@ -838,6 +913,14 @@ bool Renderer::initialize_render_passes() {
         DescriptorInfo{vk::DescriptorType::eSampler, voxel_sampler},
     };
     voxelize_set.update_bindings(device, 0, 0, voxelize_set_infos);
+ 
+    DescriptorInfo merge_voxels_infos[] {
+        DescriptorInfo{vk::DescriptorType::eSampledImage, merge_albedo_view, vk::ImageLayout::eGeneral},
+        DescriptorInfo{vk::DescriptorType::eStorageImage, merge_normal_view, vk::ImageLayout::eGeneral},
+        DescriptorInfo{vk::DescriptorType::eStorageImage, voxel_radiance_view, vk::ImageLayout::eGeneral},
+        DescriptorInfo{vk::DescriptorType::eSampler, voxel_sampler},
+    };
+    merge_voxels_set.update_bindings(device, 0, 0, merge_voxels_infos);
 
     get_frame_res().cmd.begin({vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
     get_frame_res().cmd.pipelineBarrier(
