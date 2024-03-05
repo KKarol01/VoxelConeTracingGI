@@ -376,8 +376,9 @@ void Renderer::draw() {
         get_context().input->update();
         glfwPollEvents();
 
-        auto P = glm::perspectiveFov(glm::radians(75.0f), 1024.0f, 768.0f, 0.01f, 50.0f);
+        auto P = glm::perspectiveFov(glm::radians(75.0f), 1024.0f, 768.0f, 0.01f, 25.0f);
         auto V = camera.view;
+        spdlog::debug("{} {} {}", camera.pos.x, camera.pos.y, camera.pos.z);
         glm::mat4 global_buffer_data[] {
             P, V
         };
@@ -434,11 +435,11 @@ void Renderer::draw() {
             0,
         });
 
-            cmd.setViewportWithCount(vk::Viewport{0.0f, 0.0, 256.0, 256.0, 0.0f, 1.0f});
-            cmd.setScissorWithCount(vk::Rect2D{{}, {256, 256}});
-            for(auto& gpum : scene.models) {
-                cmd.drawIndexed(gpum.index_count, 1, gpum.index_offset, gpum.vertex_offset, 0);
-            }
+        cmd.setViewportWithCount(vk::Viewport{0.0f, 0.0, 256.0, 256.0, 0.0f, 1.0f});
+        cmd.setScissorWithCount(vk::Rect2D{{}, {256, 256}});
+        for(auto& gpum : scene.models) {
+            cmd.drawIndexed(gpum.index_count, 1, gpum.index_offset, gpum.vertex_offset, 0);
+        }
                 
         cmd.endRendering();
 
@@ -861,8 +862,8 @@ bool Renderer::initialize_render_passes() {
 
     auto voxel_sampler = device.createSampler(vk::SamplerCreateInfo{
         {}, vk::Filter::eLinear, vk::Filter::eLinear, vk::SamplerMipmapMode::eLinear,
-        vk::SamplerAddressMode::eClampToBorder, vk::SamplerAddressMode::eClampToBorder, vk::SamplerAddressMode::eClampToBorder,
-        0.0f, false, 0.0f, false, vk::CompareOp::eNever, 0.0f, (f32)voxel_radiance.storage->mips
+        vk::SamplerAddressMode::eClampToEdge, vk::SamplerAddressMode::eClampToEdge, vk::SamplerAddressMode::eClampToEdge,
+        0.0f, false, 0.0f, false, vk::CompareOp::eLess, 0.0f, (f32)voxel_radiance.storage->mips
     });
 
     auto merge_albedo_view = device.createImageView(vk::ImageViewCreateInfo{{}, voxel_albedo.storage->image, vk::ImageViewType::e3D, vk::Format::eR8G8B8A8Unorm, {}, {vk::ImageAspectFlagBits::eColor, 0, voxel_albedo.storage->mips, 0, 1}});

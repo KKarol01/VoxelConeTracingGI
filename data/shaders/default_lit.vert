@@ -23,7 +23,7 @@ layout(location=0) out VS_OUT {
 void main() {
     // frag_uv = uv;
     //gl_InstanceIndex;
-    frag_pos = vec3(vec4(pos, 1.0));
+    frag_pos = pos;
     frag_normal = normal;
     frag_color = color;
 

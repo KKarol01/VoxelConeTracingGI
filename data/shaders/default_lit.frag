@@ -136,20 +136,20 @@ float get_shadowing() {
     //     }
     // }
     
-    return 1.0;
+    return 0.0;
 }
 
 vec3 calc_direct_light() {
     vec3 ambient = vec3(0.0), diffuse = vec3(0.0);
     // vec3 frag_nrm = texture(sampler2D(tex_normal, sampler1), frag_uv).rgb;
     vec3 frag_nrm = frag_normal;
-    // frag_nrm = frag_nrm*2.0 - 1.0;
+    frag_nrm = frag_nrm*2.0 - 1.0;
     // frag_nrm = normalize(frag_TBN * frag_nrm);
     // vec3 tex_diff = texture(sampler2D(diffuseTexture, sampler1), frag_uv).rgb;
     vec3 tex_diff = frag_color;
 
     PointLight point_lights[1];
-    point_lights[0].pos = vec3(0.0, 0.8, 0.0);
+    point_lights[0].pos = vec3(0.0, 0.6, 0.0);
     point_lights[0].col = vec3(1.0);
     point_lights[0].att = vec3(0.3, 0.5, 0.8);
     int num_point_lights = 1;
@@ -172,20 +172,22 @@ vec4 TraceCone(vec3 position, vec3 normal, vec3 direction, float aperture) {
     const vec3 weight = direction*direction;
 
     float d = voxel_size;
+    vec3 sp = position + normal * d;
     vec3 p = position + normal * d;
     vec4 result = vec4(0.0);
     float occlusion = 0.0;
-    const float max_distance = 1.0;
+    const float max_distance = 2.5;
 
     while(d < max_distance && result.a < 1.0) {
+        p = sp + direction * d;
         const float diameter = max(voxel_size, 2.0 * tan(aperture) * d);
-        const float mip = log2(diameter / voxel_size);
-        const vec3 voxel_coord = (p * 0.5 + 0.5);
+        const float mip = max(log2(diameter / voxel_size), 0.0);
+        const vec3 voxel_coord = clamp(vec3(p * 0.5 + 0.5), vec3(0.0), vec3(1.0));
 
         result += (1.0 - result.a) * textureLod(sampler3D(voxel_radiance, voxel_sampler), voxel_coord, mip).rgba;
 
         d += diameter; 
-        p = position + normal * d;
+        // p = position + direction * d;
     }
     
     return vec4(result.rgb, occlusion);
@@ -197,10 +199,7 @@ vec4 calculate_indirect(vec3 position, vec3 normal, vec3 albedo) {
         const float aperture = 0.57735;
 
         vec3 guide = vec3(0.0, 1.0, 0.0);
-        // if(1.0 - abs(dot(normal, guide)) < EPSILON) {
-        //     guide = vec3(0.0, 0.0, 1.0);
-        // }
-        if(abs(dot(normal, guide)) == 1.0) {
+        if(1.0 - abs(dot(normal, guide)) < EPSILON) {
             guide = vec3(0.0, 0.0, 1.0);
         }
 
@@ -231,12 +230,7 @@ void main() {
     float shadow = max(get_shadowing(), 0.2);
     vec4 indirect = calculate_indirect(position, normal, albedo);
     vec3 col = calc_direct_light()*shadow;
-    vec3 final = (col + indirect.rgb * 0.3) * indirect.a;
-    vec3 lpos = vec3(0.0, 0.8, 0.0);
-    vec3 dir = lpos - frag_pos;
-    float len = length(dir);
-    dir /= len;
-    // vec3 final = col;
+    vec3 final = (indirect.rgb) * indirect.a;
 
     outColor = vec4(final, 1.0);
 }

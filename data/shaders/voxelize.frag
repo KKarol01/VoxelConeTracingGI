@@ -153,8 +153,8 @@ void main() {
 	
 	// // Color done, now save it.
 
-	vec3 voxel = scaleAndBias(frag.position_proj);
-	ivec3 pos = ivec3(256 * voxel);
+	vec3 voxel = frag.position * 0.5 + 0.5;
+	ivec3 pos = ivec3(256.0 * voxel);
 	// // pos.y += (resolution + 2) * level;
 	// // imageAtomicRGBA8Avg(pos, res);
 	vec4 frag_diff_rgba = vec4(frag.color, 1.0);
