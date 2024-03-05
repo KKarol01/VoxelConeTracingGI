@@ -468,13 +468,46 @@ void Renderer::draw() {
 
         cmd.pipelineBarrier(
             vk::PipelineStageFlagBits::eComputeShader,
-            vk::PipelineStageFlagBits::eFragmentShader,
+            vk::PipelineStageFlagBits::eTransfer,
             {}, {}, {},
             vk::ImageMemoryBarrier{
                 vk::AccessFlagBits::eShaderWrite,
+                vk::AccessFlagBits::eTransferRead,
+                vk::ImageLayout::eGeneral, vk::ImageLayout::eGeneral,
+                {}, {}, voxel_radiance.storage->image, {vk::ImageAspectFlagBits::eColor, 0, voxel_radiance.storage->mips, 0, 1}});
+
+        i32 size = 256;
+        for(u32 i=1; i<voxel_radiance.storage->mips; ++i) {
+            cmd.pipelineBarrier(
+                vk::PipelineStageFlagBits::eTransfer,
+                vk::PipelineStageFlagBits::eTransfer,
+                {}, {}, {},
+                vk::ImageMemoryBarrier{
+                    vk::AccessFlagBits::eTransferWrite,
+                    vk::AccessFlagBits::eTransferRead,
+                    vk::ImageLayout::eGeneral, vk::ImageLayout::eGeneral,
+                    {}, {}, voxel_radiance.storage->image, {vk::ImageAspectFlagBits::eColor, i-1, 2, 0, 1}});
+            i32 mip_size = size >> i;
+            cmd.blitImage(voxel_radiance.storage->image, vk::ImageLayout::eGeneral,
+                voxel_radiance.storage->image, vk::ImageLayout::eGeneral,
+                vk::ImageBlit{
+                    vk::ImageSubresourceLayers{vk::ImageAspectFlagBits::eColor, i-1, 0, 1},
+                    { vk::Offset3D{}, vk::Offset3D{mip_size<<1, mip_size<<1, mip_size<<1} },
+                    vk::ImageSubresourceLayers{vk::ImageAspectFlagBits::eColor, i, 0, 1},
+                    { vk::Offset3D{}, vk::Offset3D{mip_size, mip_size, mip_size} },
+                },
+                vk::Filter::eLinear);
+        }
+        cmd.pipelineBarrier(
+            vk::PipelineStageFlagBits::eTransfer,
+            vk::PipelineStageFlagBits::eFragmentShader,
+            {}, {}, {},
+            vk::ImageMemoryBarrier{
+                vk::AccessFlagBits::eTransferWrite,
                 vk::AccessFlagBits::eShaderRead,
                 vk::ImageLayout::eGeneral, vk::ImageLayout::eGeneral,
                 {}, {}, voxel_radiance.storage->image, {vk::ImageAspectFlagBits::eColor, 0, voxel_radiance.storage->mips, 0, 1}});
+
         cmd.pipelineBarrier(
             vk::PipelineStageFlagBits::eTopOfPipe,
             vk::PipelineStageFlagBits::eEarlyFragmentTests,
@@ -528,6 +561,7 @@ void Renderer::draw() {
         };
 
         cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, pp_default_lit.pipeline);
+        cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, pp_default_lit.layout, 1, default_lit_set.set, {});
         cmd.beginRendering(vk::RenderingInfo{
             {},
             {{}, {1024, 768}},
@@ -828,7 +862,7 @@ bool Renderer::initialize_render_passes() {
     auto voxel_sampler = device.createSampler(vk::SamplerCreateInfo{
         {}, vk::Filter::eLinear, vk::Filter::eLinear, vk::SamplerMipmapMode::eLinear,
         vk::SamplerAddressMode::eClampToBorder, vk::SamplerAddressMode::eClampToBorder, vk::SamplerAddressMode::eClampToBorder,
-        0.0f, false, 0.0f, false, vk::CompareOp::eNever, 0.0f, (f32)voxel_albedo.storage->mips
+        0.0f, false, 0.0f, false, vk::CompareOp::eNever, 0.0f, (f32)voxel_radiance.storage->mips
     });
 
     auto merge_albedo_view = device.createImageView(vk::ImageViewCreateInfo{{}, voxel_albedo.storage->image, vk::ImageViewType::e3D, vk::Format::eR8G8B8A8Unorm, {}, {vk::ImageAspectFlagBits::eColor, 0, voxel_albedo.storage->mips, 0, 1}});
@@ -906,6 +940,12 @@ bool Renderer::initialize_render_passes() {
         DescriptorInfo{vk::DescriptorType::eUniformBuffer, global_buffer->buffer, 0, vk::WholeSize},
     };
     global_set.update_bindings(device, 0, 0, global_set_infos);
+
+    DescriptorInfo default_lit_set_infos[] {
+        DescriptorInfo{vk::DescriptorType::eSampledImage, voxel_radiance_view, vk::ImageLayout::eGeneral},
+        DescriptorInfo{vk::DescriptorType::eSampler, voxel_sampler},
+    };
+    default_lit_set.update_bindings(device, 0, 0, default_lit_set_infos);
 
     DescriptorInfo voxelize_set_infos[] {
         DescriptorInfo{vk::DescriptorType::eStorageImage, voxel_albedo_view, vk::ImageLayout::eGeneral},
