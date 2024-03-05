@@ -24,7 +24,7 @@ void main() {
     // frag_uv = uv;
     //gl_InstanceIndex;
     frag_pos = pos;
-    frag_normal = normal;
+    frag_normal = normalize(normal);
     frag_color = color;
 
     // vec3 bitangent = cross(normal, tangent);

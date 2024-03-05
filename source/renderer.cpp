@@ -289,10 +289,10 @@ bool Renderer::load_model_from_file(std::string_view name, const std::filesystem
 
         if(node->meshIndex.has_value()) {
             const auto& fgmesh = gltf->meshes[node->meshIndex.value()];
-            Mesh mesh;
-            mesh.name = fgmesh.name;
 
             for(const auto& primitive : fgmesh.primitives) {
+                Mesh mesh;
+                mesh.name = fgmesh.name;
                 auto& positions = gltf->accessors[primitive.findAttribute("POSITION")->second];
                 auto& normals = gltf->accessors[primitive.findAttribute("NORMAL")->second];
                 auto color_idx = primitive.findAttribute("COLOR_0");
@@ -305,10 +305,10 @@ bool Renderer::load_model_from_file(std::string_view name, const std::filesystem
                 fastgltf::iterateAccessorWithIndex<glm::vec3>(_gltf, normals, [&](glm::vec3 vec, size_t idx) {
                     mesh.vertices[initial_index + idx].normal = vec; 
                 });
-                if(color_idx->second < gltf->accessors.size()) {
+                if(primitive.findAttribute("COLOR_0") != primitive.attributes.end()) {
                     auto& colors = gltf->accessors[color_idx->second];
                     fastgltf::iterateAccessorWithIndex<glm::vec4>(_gltf, colors, [&](glm::vec4 vec, size_t idx) {
-                        mesh.vertices[initial_index + idx].color = glm::vec3{vec}; 
+                        mesh.vertices[initial_index + idx].color = glm::vec3{vec.x, vec.y, vec.z}; 
                     });
                 } else {
                     fastgltf::iterateAccessorWithIndex<glm::vec3>(_gltf, positions, [&](glm::vec3 vec, size_t idx) {
@@ -323,9 +323,10 @@ bool Renderer::load_model_from_file(std::string_view name, const std::filesystem
                         mesh.indices[start_index + idx] = index;
                     });
                 }
+
+                model.meshes.push_back(std::move(mesh));
             }
 
-            model.meshes.push_back(std::move(mesh));
         }
     }
 
