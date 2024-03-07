@@ -73,7 +73,7 @@ uint convVec4ToRGBA8(vec4 val) {
 		(uint(val.w) & 0xff) << 24 |
 		(uint(val.z) & 0xff) << 16 |
 		(uint(val.y) & 0xff) << 8  |
-		(uint(val.x) & 0xff)
+		(uint(val.x) & 0xff) << 0
 	);
 }
 

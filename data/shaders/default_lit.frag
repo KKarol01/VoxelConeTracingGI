@@ -41,6 +41,25 @@ const vec3 diffuseConeDirections[] = {
     vec3(-0.823639, 0.5, 0.267617)
 };
 
+const vec3 DIFFUSE_CONE_DIRECTIONS_16[16] = {
+    vec3( 0.57735,   0.57735,   0.57735  ),
+    vec3( 0.57735,  -0.57735,  -0.57735  ),
+    vec3(-0.57735,   0.57735,  -0.57735  ),
+    vec3(-0.57735,  -0.57735,   0.57735  ),
+    vec3(-0.903007, -0.182696, -0.388844 ),
+    vec3(-0.903007,  0.182696,  0.388844 ),
+    vec3( 0.903007, -0.182696,  0.388844 ),
+    vec3( 0.903007,  0.182696, -0.388844 ),
+    vec3(-0.388844, -0.903007, -0.182696 ),
+    vec3( 0.388844, -0.903007,  0.182696 ),
+    vec3( 0.388844,  0.903007, -0.182696 ),
+    vec3(-0.388844,  0.903007,  0.182696 ),
+    vec3(-0.182696, -0.388844, -0.903007 ),
+    vec3( 0.182696,  0.388844, -0.903007 ),
+    vec3(-0.182696,  0.388844,  0.903007 ),
+    vec3( 0.182696, -0.388844,  0.903007 )
+};
+
 const float diffuseConeWeights[] = {
     PI / 4.0,
     3.0 * PI / 20.0,
@@ -139,6 +158,39 @@ float get_shadowing() {
     return 0.0;
 }
 
+vec4 SampleRadiance(vec3 pos, float mip) {
+    vec4 sample_ = textureLod(sampler3D(voxel_radiance, voxel_sampler), pos, mip).rgba;
+    if(mip < 1.0) {
+        sample_ = mix(vec4(frag_color, 1.0), sample_, clamp(mip, 0.0, 1.0));
+    }
+    return sample_;
+}
+
+float TraceShadowCone(vec3 position, vec3 direction, float aperture, float max_dist) {
+    const float voxel_size = 2.0 / 256.0;
+
+    float d = voxel_size;
+    const vec3 start_pos = position + direction * d;
+
+    float visibility = 0.0;
+    float k = exp2(7.0 * 0.5);
+
+    while(visibility < 1.0 && d < max_dist) {
+        const vec3 p = start_pos + direction * d;
+        const float diameter = 2.0 * tan(aperture / voxel_size) * d * 5.0;
+        const float mip = max(log2(diameter / voxel_size), 0.0);
+        const vec3 voxel_coord = vec3(p * 0.5 + 0.5);
+
+        vec4 sample_ = SampleRadiance(voxel_coord, mip);
+
+        visibility += (1.0 - visibility) * sample_.a * k;
+        if(visibility > 0.0) { return 1.0 - visibility; }
+        d += diameter;
+    }
+
+    return 1.0 - visibility;
+}
+
 vec3 calc_direct_light() {
     vec3 ambient = vec3(0.0), diffuse = vec3(0.0);
     // vec3 frag_nrm = texture(sampler2D(tex_normal, sampler1), frag_uv).rgb;
@@ -150,16 +202,17 @@ vec3 calc_direct_light() {
     PointLight point_lights[1];
     point_lights[0].pos = vec3(0.0, 0.65, 0.0);
     point_lights[0].col = vec3(1.0);
-    point_lights[0].att = vec3(0.2, 0.4, 0.4);
+    point_lights[0].att = vec3(0.4, 0.6, 0.6);
     int num_point_lights = 1;
     for(uint i=0; i<num_point_lights; ++i) {
         PointLight pl = point_lights[i];
         vec3 light_dir = pl.pos - frag_pos;
         float dist = length(light_dir);
-        light_dir *= dist;
+        light_dir = normalize(light_dir);
 
         float ldotp = max(dot(frag_nrm, light_dir), 0.0);
         float att = 1.0 / (pl.att[0] + pl.att[1]*dist + pl.att[2]*dist*dist);
+        float shadow = max(TraceShadowCone(frag_pos, light_dir, 0.03, dist), 0.0);
         diffuse += tex_diff * att * pl.col;
     }
 
@@ -176,13 +229,21 @@ vec4 TraceCone(vec3 position, vec3 normal, vec3 direction, float aperture) {
     vec4 result = vec4(0.0);
     float occlusion = 0.0;
     const float max_distance = 3.5;
+    float cur_seg_length = voxel_size;
 
     while(d < max_distance && result.a < 1.0) {
-        const float diameter = max(voxel_size, 2.0 * tan(aperture) * d);
+        const float diameter = max(voxel_size, 2.0 * tan(aperture) * d * 20.0);
         const float mip = max(log2(diameter / voxel_size), 0.0);
         const vec3 voxel_coord = vec3(p * 0.5 + 0.5);
 
-        result += (1.0 - result.a) * textureLod(sampler3D(voxel_radiance, voxel_sampler), voxel_coord, mip).rgba;
+        vec4 sample_ = SampleRadiance(voxel_coord, mip);
+        const float correction = diameter / voxel_size;
+        // const float opacity = clamp(1.0 - pow(1.0 - sample_.a, correction), 0.0, 1.0);
+        // sample_.rgb *= correction;
+        // sample_.a = opacity;
+
+        result += (1.0 - result.a) * sample_;
+        occlusion += (1.0 - occlusion) * sample_.a / (1.0 + (d*128.0 + voxel_size));
 
         d += diameter; 
         p = position + direction * d;
@@ -193,28 +254,27 @@ vec4 TraceCone(vec3 position, vec3 normal, vec3 direction, float aperture) {
 
 vec4 calculate_indirect(vec3 position, vec3 normal, vec3 albedo) {
     vec4 diffuse_trace = vec4(0.0);
-    if(dot(albedo, albedo) > EPSILON) {
-        const float aperture = 0.57735;
+    if(any(greaterThan(albedo, vec3(EPSILON)))) {
+        const float aperture = 0.872665 * 1.0;
 
-        vec3 guide = vec3(0.0, 1.0, 0.0);
-        if(1.0 - abs(dot(normal, guide)) < EPSILON) {
-            guide = vec3(0.0, 0.0, 1.0);
-        }
+        // vec3 guide = vec3(0.0, 1.0, 0.0);
+        // if(1.0 - abs(dot(normal, guide)) < EPSILON) {
+        //     guide = vec3(0.0, 0.0, 1.0);
+        // }
 
-        vec3 right = normalize(guide - dot(normal, guide) * normal);
-        vec3 up = cross(right, normal);
+        // vec3 right = normalize(guide - dot(normal, guide) * normal);
+        // vec3 up = cross(right, normal);
 
-        vec3 cone_direction;
-        for(int i=0; i<6; ++i) {
-            cone_direction = normal;
-            cone_direction += diffuseConeDirections[i].x * right + diffuseConeDirections[i].z * up;
-            cone_direction = normalize(cone_direction);
-            diffuse_trace += TraceCone(position, normal, cone_direction, aperture) * diffuseConeWeights[i];
+        for(int i=0; i<16; ++i) {
+            vec3 cone_direction = normalize(normal + DIFFUSE_CONE_DIRECTIONS_16[i]);
+            // cone_direction += DIFFUSE_CONE_DIRECTIONS_16[i].x * right + DIFFUSE_CONE_DIRECTIONS_16[i].z * up;
+            // cone_direction = normalize(cone_direction);
+            diffuse_trace += TraceCone(position, normal, cone_direction, aperture) * max(dot(cone_direction, normal), 0.0);
         }
     }
 
-    diffuse_trace.rgb *= albedo;
-    return vec4(diffuse_trace.rgb, 1.0);
+    diffuse_trace.rgb *= albedo * 1.0;
+    return vec4(diffuse_trace.rgb, clamp(1.0 - diffuse_trace.a, 0.0, 1.0));
 }
 
 void main() {
@@ -225,10 +285,9 @@ void main() {
     // normal = normal*2.0 - 1.0;
     // normal = normalize(frag_TBN * normal);
     // vec3 albedo = texture(sampler2D(diffuseTexture, sampler1), frag_uv).rgb;
-    float shadow = max(get_shadowing(), 0.2);
     vec4 indirect = calculate_indirect(position, normal, albedo);
-    vec3 col = calc_direct_light() * shadow;
-    vec3 final = (col + indirect.rgb * 2.0) * indirect.a;
+    vec3 col = calc_direct_light(); 
+    vec3 final = (col + indirect.rgb) * 0.3 * indirect.a;
 
     outColor = vec4(final, 1.0);
 }
