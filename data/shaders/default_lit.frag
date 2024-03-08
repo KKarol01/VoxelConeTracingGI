@@ -287,7 +287,7 @@ void main() {
     // vec3 albedo = texture(sampler2D(diffuseTexture, sampler1), frag_uv).rgb;
     vec4 indirect = calculate_indirect(position, normal, albedo);
     vec3 col = calc_direct_light(); 
-    vec3 final = (col + indirect.rgb) * 0.3 * indirect.a;
+    vec3 final = (col + indirect.rgb) * indirect.a;
 
     outColor = vec4(final, 1.0);
 }

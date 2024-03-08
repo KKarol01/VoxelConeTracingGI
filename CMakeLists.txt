@@ -34,4 +34,13 @@ add_subdirectory(third_party/fastgltf)
 
 add_library(stb STATIC source/build_stb.cpp)
 
+add_library(imgui STATIC
+    third_party/imgui/imgui.cpp
+    third_party/imgui/imgui_draw.cpp
+    third_party/imgui/imgui_widgets.cpp
+    third_party/imgui/backends/imgui_impl_vulkan.cpp
+    third_party/imgui/backends/imgui_impl_glfw.cpp
+)
+target_include_directories(imgui PRIVATE third_party/imgui ${Vulkan_INCLUDE_DIRS} third_party/glfw/include)
+
 add_subdirectory(source)
