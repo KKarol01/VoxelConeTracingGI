@@ -245,6 +245,7 @@ private:
     bool initialize_vulkan();
     bool initialize_swapchain();
     bool initialize_frame_resources();
+    bool initialize_imgui();
     bool initialize_render_passes();
 
     template<typename T> GpuBuffer* create_buffer(std::string_view label, vk::BufferUsageFlags usage, std::span<T> data) {
@@ -288,7 +289,6 @@ public:
     vk::SurfaceKHR surface;
     vk::PhysicalDevice physical_device;
     vk::Device device;
-    vk::DispatchLoaderDynamic dynamic_loader;
     u32 graphics_queue_idx, presentation_queue_idx;
     vk::Queue graphics_queue, presentation_queue;
     VmaAllocator vma;
@@ -299,6 +299,10 @@ public:
     std::array<FrameResources, FRAMES_IN_FLIGHT> frames{};
     std::vector<GpuBuffer*> buffers;
     std::vector<TextureStorage*> texture_storages;
+    struct {
+        PFN_vkGetInstanceProcAddr get_instance_proc_addr;
+        PFN_vkGetDeviceProcAddr get_device_proc_addr;
+    } vulkan_function_pointers;
     
     vk::DescriptorSetLayout global_set_layout;
     vk::DescriptorSetLayout default_lit_set_layout;
@@ -328,5 +332,10 @@ public:
 template<typename T> void set_debug_name(vk::Device device, T object, std::string_view name) {
     device.setDebugUtilsObjectNameEXT(vk::DebugUtilsObjectNameInfoEXT{
         VulkanObjectType<T>::type, (u64)static_cast<T::NativeType>(object), name.data()
-    }, get_context().renderer->dynamic_loader);
+    }, vk::DispatchLoaderDynamic{
+            get_context().renderer->instance,
+            get_context().renderer->vulkan_function_pointers.get_instance_proc_addr,
+            get_context().renderer->device,
+            get_context().renderer->vulkan_function_pointers.get_device_proc_addr
+        });
 }

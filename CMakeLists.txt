@@ -36,6 +36,7 @@ add_library(stb STATIC source/build_stb.cpp)
 
 add_library(imgui STATIC
     third_party/imgui/imgui.cpp
+    third_party/imgui/imgui_tables.cpp
     third_party/imgui/imgui_draw.cpp
     third_party/imgui/imgui_widgets.cpp
     third_party/imgui/backends/imgui_impl_vulkan.cpp

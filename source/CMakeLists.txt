@@ -48,6 +48,7 @@ target_link_libraries(vxgi
         vma
         fastgltf
         stb
+        imgui
         vulkan-1
         shaderc_sharedd
         libomp

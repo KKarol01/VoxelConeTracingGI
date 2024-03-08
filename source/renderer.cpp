@@ -9,6 +9,9 @@
 #include <VkBootstrap.h>
 #include <shaderc/shaderc.hpp>
 #include <stb/stb_include.h>
+#include <imgui/imgui.h>
+#include <imgui/imgui_impl_glfw.h>
+#include <imgui/imgui_impl_vulkan.h>
 #include <format>
 #include <stack>
 
@@ -254,6 +257,10 @@ bool Renderer::initialize() {
     }
 
     if(!initialize_render_passes()) {
+        return false;
+    }
+
+    if(!initialize_imgui()) {
         return false;
     }
 
@@ -583,6 +590,14 @@ void Renderer::draw() {
         for(auto& gpum : scene.models) {
             cmd.drawIndexed(gpum.index_count, 1, gpum.index_offset, gpum.vertex_offset, 0);
         }
+
+        ImGui_ImplVulkan_NewFrame();
+        ImGui_ImplGlfw_NewFrame();
+        ImGui::NewFrame();
+        ImGui::Begin("asdf");
+        ImGui::End();
+        ImGui::Render();
+        ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmd);
         
         cmd.endRendering();
 
@@ -601,7 +616,7 @@ void Renderer::draw() {
                 {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1}
             }
         );
-        
+
         cmd.end();
         vk::PipelineStageFlags wait_masks[] {
             vk::PipelineStageFlagBits::eColorAttachmentOutput
@@ -698,7 +713,10 @@ bool Renderer::initialize_vulkan() {
         spdlog::error("VMA: could not create allocator");
     }
 
-    dynamic_loader = vk::DispatchLoaderDynamic{instance, instance_result->fp_vkGetInstanceProcAddr, device, device_builder_result->fp_vkGetDeviceProcAddr};
+    vulkan_function_pointers = {
+        .get_instance_proc_addr = instance_result->fp_vkGetInstanceProcAddr,
+        .get_device_proc_addr = instance_result->fp_vkGetDeviceProcAddr,
+    };
 
     return true;
 }
@@ -747,6 +765,39 @@ bool Renderer::initialize_frame_resources() {
         set_debug_name(device, frames.at(i).swapchain_semaphore, std::format("frame_swapchain_semaphore_{}", i));
         set_debug_name(device, frames.at(i).rendering_semaphore, std::format("frame_rendering_semaphore_{}", i));
         set_debug_name(device, frames.at(i).in_flight_fence, std::format("frame_in_flight_fence_{}", i));
+    }
+
+    return true;
+}
+bool Renderer::initialize_imgui() {
+    IMGUI_CHECKVERSION();
+    ImGui::CreateContext();
+    ImGuiIO& io = ImGui::GetIO(); (void)io;
+
+    ImGui::StyleColorsDark();
+
+    if(!ImGui_ImplGlfw_InitForVulkan(window, true)) {
+        spdlog::error("IMGUI: could not init glfw for vulkan");
+        return false;
+    }
+    ImGui_ImplVulkan_InitInfo init_info = {};
+    init_info.Instance = instance;
+    init_info.PhysicalDevice = physical_device;
+    init_info.Device = device;
+    init_info.QueueFamily = graphics_queue_idx;
+    init_info.Queue = graphics_queue;
+    init_info.DescriptorPool = global_desc_pool;
+    init_info.MinImageCount = swapchain_images.size();
+    init_info.ImageCount = swapchain_images.size();
+    init_info.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
+    init_info.UseDynamicRendering = true;
+    init_info.PipelineRenderingCreateInfo = vk::PipelineRenderingCreateInfo{
+        0, swapchain_format, depth_texture.storage->format
+    };
+
+    if(!ImGui_ImplVulkan_Init(&init_info)) {
+        spdlog::error("IMGUI: could not init vulkan impl");
+        return false;
     }
 
     return true;
@@ -825,6 +876,7 @@ bool Renderer::initialize_render_passes() {
         vk::DescriptorPoolSize{vk::DescriptorType::eStorageBuffer, 1024},
         vk::DescriptorPoolSize{vk::DescriptorType::eStorageImage, 1024},
         vk::DescriptorPoolSize{vk::DescriptorType::eSampledImage, 1024},
+        vk::DescriptorPoolSize{vk::DescriptorType::eCombinedImageSampler, 10},
     };
     global_desc_pool = device.createDescriptorPool(vk::DescriptorPoolCreateInfo{
         {}, 1024, global_sizes
