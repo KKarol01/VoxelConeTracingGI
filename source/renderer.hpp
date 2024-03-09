@@ -143,8 +143,15 @@ struct Vertex {
     glm::vec3 color;
 };
 
+struct alignas(16) Material {
+    glm::vec4 ambient_color{0.0f};
+    glm::vec4 diffuse_color{1.0f};
+    glm::vec4 specular_color{1.0f};
+};
+
 struct Mesh {
     std::string name;
+    Material material;
     std::vector<Vertex> vertices;
     std::vector<u32> indices;
 };
@@ -154,7 +161,7 @@ struct Model {
 };
 
 struct GpuMesh {
-    const Mesh* mesh;
+    Mesh* mesh;
     u32 vertex_offset, vertex_count;
     u32 index_offset, index_count;
 };
@@ -163,6 +170,7 @@ struct Scene {
     std::vector<GpuMesh> models;
     GpuBuffer* vertex_buffer;
     GpuBuffer* index_buffer;
+    GpuBuffer* material_buffer;
 };
 
 struct TextureStorage {
@@ -248,6 +256,8 @@ private:
     bool initialize_imgui();
     bool initialize_render_passes();
 
+    void draw_ui();
+
     template<typename T> GpuBuffer* create_buffer(std::string_view label, vk::BufferUsageFlags usage, std::span<T> data) {
         vk::BufferCreateInfo buffer_info{
             {},
@@ -308,12 +318,14 @@ public:
     vk::DescriptorSetLayout default_lit_set_layout;
     vk::DescriptorSetLayout voxelize_set_layout;
     vk::DescriptorSetLayout merge_voxels_set_layout;
+    vk::DescriptorSetLayout material_set_layout;
 
     vk::DescriptorPool global_desc_pool;
     DescriptorSet global_set;
     DescriptorSet default_lit_set;
     DescriptorSet voxelize_set;
     DescriptorSet merge_voxels_set;
+    DescriptorSet material_set;
 
     Texture3D voxel_albedo, voxel_normal, voxel_radiance;
     Texture2D depth_texture;
@@ -337,5 +349,6 @@ template<typename T> void set_debug_name(vk::Device device, T object, std::strin
             get_context().renderer->vulkan_function_pointers.get_instance_proc_addr,
             get_context().renderer->device,
             get_context().renderer->vulkan_function_pointers.get_device_proc_addr
-        });
+        }
+    );
 }

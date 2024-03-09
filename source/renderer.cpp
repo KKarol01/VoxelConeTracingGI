@@ -305,12 +305,13 @@ bool Renderer::load_model_from_file(std::string_view name, const std::filesystem
             for(const auto& primitive : fgmesh.primitives) {
                 Mesh mesh;
                 mesh.name = fgmesh.name;
+
+                auto& _gltf = gltf.get();
                 auto& positions = gltf->accessors[primitive.findAttribute("POSITION")->second];
                 auto& normals = gltf->accessors[primitive.findAttribute("NORMAL")->second];
-                auto color_idx = primitive.findAttribute("COLOR_0");
                 auto initial_index = mesh.vertices.size();
+
                 mesh.vertices.resize(mesh.vertices.size() + positions.count);
-                auto& _gltf = gltf.get();
                 fastgltf::iterateAccessorWithIndex<glm::vec3>(_gltf, positions, [&](glm::vec3 vec, size_t idx) {
                     mesh.vertices[initial_index + idx].position = vec; 
                 });
@@ -318,7 +319,7 @@ bool Renderer::load_model_from_file(std::string_view name, const std::filesystem
                     mesh.vertices[initial_index + idx].normal = vec; 
                 });
                 if(primitive.findAttribute("COLOR_0") != primitive.attributes.end()) {
-                    auto& colors = gltf->accessors[color_idx->second];
+                    auto& colors = gltf->accessors[primitive.findAttribute("COLOR_0")->second];
                     fastgltf::iterateAccessorWithIndex<glm::vec4>(_gltf, colors, [&](glm::vec4 vec, size_t idx) {
                         mesh.vertices[initial_index + idx].color = glm::vec3{vec.x, vec.y, vec.z}; 
                     });
@@ -350,9 +351,10 @@ bool Renderer::load_model_from_file(std::string_view name, const std::filesystem
 void Renderer::setup_scene() {
     std::vector<float> vertices;
     std::vector<u32> indices;
+    std::vector<Material> materials;
 
-    for(const auto& [name, model] : models) {
-        for(const auto& mesh : model.meshes) {
+    for(auto& [name, model] : models) {
+        for(auto& mesh : model.meshes) {
             GpuMesh gpu{
                 .mesh = &mesh,
                 .vertex_offset = (u32)vertices.size() / (u32)(sizeof(Vertex) / sizeof(f32)),
@@ -362,6 +364,7 @@ void Renderer::setup_scene() {
             };
 
             scene.models.push_back(gpu);
+            materials.push_back(mesh.material);
 
             for(auto& v : mesh.vertices) {
                 vertices.push_back(v.position.x);
@@ -381,6 +384,11 @@ void Renderer::setup_scene() {
 
     scene.vertex_buffer = create_buffer("scene_vertex_buffer", vk::BufferUsageFlagBits::eVertexBuffer, std::span{vertices});
     scene.index_buffer = create_buffer("scene_index_buffer", vk::BufferUsageFlagBits::eIndexBuffer, std::span{indices});
+    scene.material_buffer = create_buffer("scene_material_buffer", vk::BufferUsageFlagBits::eStorageBuffer, std::span{materials});
+    DescriptorInfo material_set_infos[] {
+        DescriptorInfo{vk::DescriptorType::eStorageBuffer, scene.material_buffer->buffer, 0ull, vk::WholeSize},
+    };
+    material_set.update_bindings(device, 0, 0, material_set_infos);
 }
 
 void Renderer::draw() {
@@ -391,7 +399,6 @@ void Renderer::draw() {
 
         auto P = glm::perspectiveFov(glm::radians(75.0f), 1024.0f, 768.0f, 0.01f, 25.0f);
         auto V = camera.view;
-        spdlog::debug("{} {} {}", camera.pos.x, camera.pos.y, camera.pos.z);
         glm::mat4 global_buffer_data[] {
             P, V
         };
@@ -576,6 +583,7 @@ void Renderer::draw() {
 
         cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, pp_default_lit.pipeline);
         cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, pp_default_lit.layout, 1, default_lit_set.set, {});
+        cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, pp_default_lit.layout, 2, material_set.set, {});
         cmd.beginRendering(vk::RenderingInfo{
             {},
             {{}, {1024, 768}},
@@ -587,17 +595,12 @@ void Renderer::draw() {
 
         cmd.setViewportWithCount(vk::Viewport{0.0f, 768.0f, 1024.0f, -768.0f, 0.0f, 1.0f});
         cmd.setScissorWithCount(vk::Rect2D{{}, {1024, 768}});
-        for(auto& gpum : scene.models) {
-            cmd.drawIndexed(gpum.index_count, 1, gpum.index_offset, gpum.vertex_offset, 0);
+        for(u32 idx = 0; auto& gpum : scene.models) {
+            cmd.drawIndexed(gpum.index_count, 1, gpum.index_offset, gpum.vertex_offset, idx);
+            ++idx;
         }
 
-        ImGui_ImplVulkan_NewFrame();
-        ImGui_ImplGlfw_NewFrame();
-        ImGui::NewFrame();
-        ImGui::Begin("asdf");
-        ImGui::End();
-        ImGui::Render();
-        ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), cmd);
+        draw_ui();
         
         cmd.endRendering();
 
@@ -865,10 +868,15 @@ bool Renderer::initialize_render_passes() {
         vk::DescriptorSetLayoutBinding{3, vk::DescriptorType::eSampler, 1, all_stages},
     };
 
+    vk::DescriptorSetLayoutBinding material_set_bindings[] {
+        vk::DescriptorSetLayoutBinding{0, vk::DescriptorType::eStorageBuffer, 1, all_stages},
+    };
+
     vk::DescriptorSetLayoutCreateInfo global_set_info{{}, global_set_bindings};
     vk::DescriptorSetLayoutCreateInfo default_lit_info{{}, default_lit_set_bindings};
     vk::DescriptorSetLayoutCreateInfo voxelize_info{{}, voxelize_set_bindings};
     vk::DescriptorSetLayoutCreateInfo merge_voxels_info{{}, merge_voxels_set_bindings};
+    vk::DescriptorSetLayoutCreateInfo material_info{{}, material_set_bindings};
 
     vk::DescriptorPoolSize global_sizes[] {
         vk::DescriptorPoolSize{vk::DescriptorType::eSampler, 1024},
@@ -895,10 +903,14 @@ bool Renderer::initialize_render_passes() {
     merge_voxels_set_layout = device.createDescriptorSetLayout(merge_voxels_info);
     set_debug_name(device, merge_voxels_set_layout, "merge_voxels_set_layout");
 
+    material_set_layout = device.createDescriptorSetLayout(material_info);
+    set_debug_name(device, material_set_layout, "material_set_layout");
+
     global_set = DescriptorSet{device, global_desc_pool, global_set_layout};
     default_lit_set = DescriptorSet{device, global_desc_pool, default_lit_set_layout};
     voxelize_set = DescriptorSet{device, global_desc_pool, voxelize_set_layout};
     merge_voxels_set = DescriptorSet{device, global_desc_pool, merge_voxels_set_layout};
+    material_set = DescriptorSet{device, global_desc_pool, material_set_layout};
 
     voxel_albedo = Texture3D{256, 256, 256, vk::Format::eR32Uint, 1, vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eTransferSrc | vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled};
     set_debug_name(device, voxel_albedo.storage->image, "voxel_albedo");
@@ -959,6 +971,7 @@ bool Renderer::initialize_render_passes() {
         .with_depth_attachment(vk::Format::eD32Sfloat)
         .with_layout(global_set_layout)
         .with_layout(default_lit_set_layout)
+        .with_layout(material_set_layout)
         .build_graphics("default_lit_pipeline");
 
     PipelineBuilder voxelize_builder{this};
@@ -1073,6 +1086,50 @@ bool Renderer::initialize_render_passes() {
     graphics_queue.waitIdle();
 
     return true;
+}
+
+void Renderer::draw_ui() {
+    ImGui_ImplVulkan_NewFrame();
+    ImGui_ImplGlfw_NewFrame();
+    ImGui::NewFrame();
+
+    static auto scene_width = 250u;
+    const auto scene_flags = 
+        ImGuiWindowFlags_NoCollapse |
+        ImGuiWindowFlags_NoScrollbar |
+        ImGuiWindowFlags_NoMove;
+    ImGui::SetNextWindowPos(ImVec2(window_width - scene_width, 0));
+    ImGui::SetNextWindowSize(ImVec2(scene_width, window_height));
+    ImGui::Begin("Scene", 0, scene_flags);
+    for(u32 i=0; i<scene.models.size(); ++i) {
+        auto &model = scene.models.at(i);
+        if(ImGui::TreeNode(std::format("{}##_{}", model.mesh->name, i).c_str())) {
+            if(ImGui::CollapsingHeader("material")) {
+                bool modified = false;
+                ImGui::PushItemWidth(150.0f);
+                modified |= ImGui::SliderFloat("ambient_strength", &model.mesh->material.ambient_color.w, 0.0f, 2.0f);
+                modified |= ImGui::ColorEdit3("ambient_color", &model.mesh->material.ambient_color.x);
+                ImGui::Dummy({1.0f, 5.0f});
+                modified |= ImGui::SliderFloat("diffuse_strength", &model.mesh->material.diffuse_color.w, 0.0f, 2.0f);
+                modified |= ImGui::ColorEdit3("diffuse_color", &model.mesh->material.diffuse_color.x);
+                ImGui::Dummy({1.0f, 5.0f});
+                modified |= ImGui::SliderFloat("specular_strength", &model.mesh->material.specular_color.w, 0.0f, 2.0f);
+                modified |= ImGui::ColorEdit3("specular_color", &model.mesh->material.specular_color.x);
+                ImGui::PopItemWidth();
+
+                if(modified) {
+                    Material* materials = (Material*)scene.material_buffer->data;
+                    memcpy(&materials[i], &model.mesh->material, sizeof(Material));
+                }
+            }
+            ImGui::TreePop();
+        }
+    }
+    scene_width = ImGui::GetWindowWidth();
+    ImGui::End();
+
+    ImGui::Render();
+    ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), get_frame_res().cmd);
 }
 
 std::vector<u32> Renderer::compile_shader(std::string_view filename, std::string_view file) {

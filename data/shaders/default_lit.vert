@@ -13,6 +13,7 @@ layout(location=0) out VS_OUT {
     vec3 frag_pos;
     vec3 frag_normal;
     vec3 frag_color;
+    flat int frag_instance_index;
 };
 
 #include "global_set"
@@ -26,6 +27,7 @@ void main() {
     frag_pos = pos;
     frag_normal = normal;
     frag_color = color;
+    frag_instance_index = gl_InstanceIndex;
 
     // vec3 bitangent = cross(normal, tangent);
     // frag_TBN = mat3(tangent, bitangent, normal);

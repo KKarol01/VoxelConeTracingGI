@@ -48,7 +48,7 @@ float TraceShadow(vec3 position, vec3 direction, float maxTracingDistance) {
 
         if(traceSample > 1.0 - EPSILON) { return 0.0; }
 
-        visibility += (1.0 - visibility) * traceSample * dst;
+        // visibility += (1.0 - visibility) * traceSample * dst;
 
         dst += voxelTexSize;
         cpos = position + direction * dst;

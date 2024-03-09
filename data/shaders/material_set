@@ -1,0 +1,8 @@
+struct Material {
+    vec4 ambient_color;
+    vec4 diffuse_color;
+    vec4 specular_color;
+};
+layout(std140, set=2, binding=0) readonly buffer MaterialsStorage {
+    Material materials[];
+};
