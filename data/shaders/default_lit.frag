@@ -157,12 +157,11 @@ vec3 calc_direct_light() {
     return ambient + diffuse + specular;
 }
 
-vec4 DiffuseCone(const vec3 origin, vec3 dir) {
+vec4 DiffuseCone(const vec3 origin, const vec3 dir) {
     const float voxel_size = 2.0 / 256.0;
 	float max_dist = 3.0;
 	float current_dist = voxel_size;
-	float apperture_angle = PI / 3.0; // Angle in Radians.
-    apperture_angle = 0.55;
+	float apperture_angle = 0.55; // Angle in Radians.
 	vec3 color = vec3(0.0);
 	float occlusion = 0.0;
 
@@ -184,6 +183,44 @@ vec4 DiffuseCone(const vec3 origin, vec3 dir) {
 		current_dist += max(current_coneDiameter, voxel_size);
 	}
 	return vec4(color, occlusion);
+}
+
+vec4 specular_cone(const vec3 origin, const vec3 dir) {
+    const float voxel_size = 2.0 / 256.0;
+	float max_dist = 1.0;
+	float current_dist = voxel_size;
+    float apperture_angle = 0.05;
+	vec3 color = vec3(0.0);
+	float occlusion = 0.0;
+    PointLight point_lights[1];
+    point_lights[0].pos = vec3(0.0, 0.65, 0.0);
+    point_lights[0].col = vec3(1.0);
+    point_lights[0].att = vec3(0.2, 0.4, 0.6);
+
+	while(current_dist < max_dist && occlusion < 1.0) {
+		float current_coneDiameter = 2.0 * current_dist * tan(apperture_angle * 0.5);
+		vec3 pos_worldspace = origin + dir * current_dist;
+
+        float vlevel = log2(current_coneDiameter / voxel_size); // Current mipmap level
+        vlevel = min(8.0, max(vlevel, 0.0));
+
+        vec3 pos_texturespace = (pos_worldspace + vec3(1.0)) * 0.5; // [-1,1] Coordinates to [0,1]
+		vec4 voxel = textureLod(sampler3D(voxel_radiance, voxel_sampler), pos_texturespace, vlevel);	// Sample
+		vec3 color_read = voxel.rgb;
+		float occlusion_read = voxel.a;
+
+        color += (1.0 - occlusion) * color_read;
+        occlusion += (1.0 - occlusion) * occlusion_read / (1.0 + current_coneDiameter);
+
+		current_dist += max(current_coneDiameter, voxel_size);
+	}
+
+    const vec3 light_dir = normalize(point_lights[0].pos - frag_pos);
+    const float c = mat.specular_color.a * 0.008 * PI;
+    const float angle = max(0.0, acos(dot(light_dir, dir)) - c);
+    const float strength = pow(1.0 - (angle / PI), 4.0);
+    
+	return vec4(color * strength, occlusion);  
 }
 
 vec4 indirectDiffuse() {
@@ -223,11 +260,14 @@ void main() {
     // normal = normal*2.0 - 1.0;
     // normal = normalize(frag_TBN * normal);
     // vec3 albedo = texture(sampler2D(diffuseTexture, sampler1), frag_uv).rgb;
+    vec3 view_pos = vec3(V * vec4(0.0, 0.0, 0.0, 1.0));
+    vec4 specular = specular_cone(frag_pos, normalize(reflect(normalize(frag_pos - view_pos), frag_normal)));
     vec4 indirect = indirectDiffuse();
     // indirect.rgb *=
     vec3 direct = calc_direct_light();
     // direct *= 0.0;
-    vec3 final = (direct.rgb + indirect.rgb) * indirect.a;
+    vec3 final = (direct.rgb + indirect.rgb + specular.rgb) * indirect.a;
     // outColor = vec4(pow(final, vec3(1.0/2.2)), 1.0);
+    // final = specular.rgb * specular.a;
     outColor = vec4(final, 1.0);
 }
