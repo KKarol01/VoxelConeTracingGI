@@ -73,7 +73,7 @@ void main() {
     PointLight point_lights[1];
     point_lights[0].pos = vec3(0.0, 0.65, 0.0);
     point_lights[0].col = vec3(1.0);
-    point_lights[0].att = vec3(0.2, 0.4, 0.6);
+    point_lights[0].att = vec3(0.8, 0.8, 0.8);
     // point_lights[0].att = vec3(1.0);
 
     ivec3 write_pos = ivec3(gl_GlobalInvocationID.xyz);
@@ -93,9 +93,10 @@ void main() {
         float dist = distance(pl.pos, world_pos);
         ldir /= dist;
 
+        float att = pl.att[0] + pl.att[1] * dist + pl.att[2] * dist * dist;
         float visibility = TraceShadow(world_pos, ldir, dist);
         float ndotl = max(0.0, dot(normalize(pl.pos - world_pos), normal));
-        vec3 res = albedo.rgb * ndotl * pl.col * visibility;
+        vec3 res = albedo.rgb * ndotl * pl.col * visibility * att;
         light = vec4(res, visibility);
     }
     imageStore(voxel_radiance, write_pos, light);

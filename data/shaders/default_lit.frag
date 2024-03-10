@@ -161,7 +161,8 @@ vec4 DiffuseCone(const vec3 origin, vec3 dir) {
     const float voxel_size = 2.0 / 256.0;
 	float max_dist = 3.0;
 	float current_dist = voxel_size;
-	float apperture_angle = PI / 12.0; // Angle in Radians.
+	float apperture_angle = PI / 3.0; // Angle in Radians.
+    apperture_angle = 0.55;
 	vec3 color = vec3(0.0);
 	float occlusion = 0.0;
 
@@ -180,7 +181,7 @@ vec4 DiffuseCone(const vec3 origin, vec3 dir) {
         color += (1.0 - occlusion) * color_read;
         occlusion += (1.0 - occlusion) * occlusion_read / (1.0 + current_coneDiameter);
 
-		current_dist += max(current_coneDiameter, voxel_size) * 0.5;
+		current_dist += max(current_coneDiameter, voxel_size);
 	}
 	return vec4(color, occlusion);
 }
@@ -191,8 +192,7 @@ vec4 indirectDiffuse() {
 
     vec3 guide = vec3(0.0, 1.0, 0.0);
 
-    if (abs(dot(frag_normal,guide)) == 1.0f)
-    {
+    if (abs(dot(frag_normal,guide)) > 0.99) {
         guide = vec3(0.0, 0.0, 1.0);
     }
 
@@ -202,13 +202,13 @@ vec4 indirectDiffuse() {
     vec4 diffuseTrace = vec4(0.0);
     for(int i = 0; i < 16; i++)
     {
-        vec3 coneDirection = frag_normal + DIFFUSE_CONE_DIRECTIONS_16[i];
-        // coneDirection += DIFFUSE_CONE_DIRECTIONS_16[i].x * right + DIFFUSE_CONE_DIRECTIONS_16[i].z * up;
+        vec3 coneDirection = frag_normal;
+        coneDirection += DIFFUSE_CONE_DIRECTIONS_16[i].x * right + DIFFUSE_CONE_DIRECTIONS_16[i].z * up;
         coneDirection = normalize(coneDirection);
         diffuseTrace += DiffuseCone(origin, coneDirection) * max(0.0, dot(coneDirection, frag_normal));
     }
     diffuseTrace /= 16.0;
-    diffuseTrace.rgb *= 0.20;
+    diffuseTrace.rgb *= 0.30;
     diffuseTrace.rgb *= frag_color;
     vec3 res = diffuseTrace.rgb;
     return vec4(res, clamp(1.0 - diffuseTrace.a, 0.0, 1.0));
@@ -224,7 +224,10 @@ void main() {
     // normal = normalize(frag_TBN * normal);
     // vec3 albedo = texture(sampler2D(diffuseTexture, sampler1), frag_uv).rgb;
     vec4 indirect = indirectDiffuse();
+    // indirect.rgb *=
     vec3 direct = calc_direct_light();
-    vec3 final = (direct.rgb + indirect.rgb*5.0) * indirect.a;
+    // direct *= 0.0;
+    vec3 final = (direct.rgb + indirect.rgb) * indirect.a;
+    // outColor = vec4(pow(final, vec3(1.0/2.2)), 1.0);
     outColor = vec4(final, 1.0);
 }
