@@ -14,6 +14,7 @@ add_executable(vxgi
 target_compile_options(vxgi
     PRIVATE
         -fopenmp
+	$<$<CONFIG:Relase>: -O2>
 )
 
 target_compile_features(vxgi
@@ -50,6 +51,7 @@ target_link_libraries(vxgi
         stb
         imgui
         vulkan-1
-        shaderc_sharedd
+	$<$<CONFIG:Debug>: shaderc_sharedd>
+	$<$<CONFIG:Release>: shaderc_shared>
         libomp
 )
