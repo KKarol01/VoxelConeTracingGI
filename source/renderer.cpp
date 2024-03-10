@@ -391,8 +391,67 @@ void Renderer::setup_scene() {
     material_set.update_bindings(device, 0, 0, material_set_infos);
 }
 
+static char* read_shader_file(const std::filesystem::path& path) {
+    static std::filesystem::path shader_path = "data/shaders";
+    char error[256] = {};
+    auto full_path = shader_path / path;
+    auto path_str = full_path.string();
+    auto parent_path_str = shader_path.string();
+    auto file = stb_include_file((char*) path_str.c_str(), 0, (char*)parent_path_str.c_str(), error);
+
+    if(error[0] != 0) {
+        spdlog::error("stb_include: Error {}", error);
+    }
+
+    return file;
+}
+
 void Renderer::draw() {
     while(!glfwWindowShouldClose(window)) {
+        if(recompile_pipelines) {
+            char* read_shaders[] {
+                read_shader_file("default_lit.vert"),
+                read_shader_file("default_lit.frag"),
+            };
+            std::vector<u32> irs[] {
+                compile_shader("default_lit.vert", read_shaders[0]),
+                compile_shader("default_lit.frag", read_shaders[1]),
+            };
+            vk::ShaderModule modules[] {
+                device.createShaderModule(vk::ShaderModuleCreateInfo{{}, irs[0].size() * sizeof(u32), irs[0].data()}),
+                device.createShaderModule(vk::ShaderModuleCreateInfo{{}, irs[1].size() * sizeof(u32), irs[1].data()}),
+            };
+            free(read_shaders[0]);
+            free(read_shaders[1]);
+
+            device.destroyPipeline(pp_default_lit.pipeline);
+            device.destroyPipelineLayout(pp_default_lit.layout);
+            PipelineBuilder default_lit_builder{this};
+            pp_default_lit = default_lit_builder
+                .with_vertex_input(
+                    {
+                        vk::VertexInputBindingDescription{0, sizeof(Vertex), vk::VertexInputRate::eVertex}
+                    },
+                    {
+                        vk::VertexInputAttributeDescription{0, 0, vk::Format::eR32G32B32Sfloat, 0},
+                        vk::VertexInputAttributeDescription{1, 0, vk::Format::eR32G32B32Sfloat, 12},
+                        vk::VertexInputAttributeDescription{2, 0, vk::Format::eR32G32B32Sfloat, 24},
+                    })
+                .with_depth_testing(true, true, vk::CompareOp::eLess)
+                .with_culling(vk::CullModeFlagBits::eBack, vk::FrontFace::eCounterClockwise)
+                .with_shaders({
+                    {vk::ShaderStageFlagBits::eVertex, modules[0]},
+                    {vk::ShaderStageFlagBits::eFragment, modules[1]},
+                })
+                .with_color_attachments({swapchain_format})
+                .with_depth_attachment(vk::Format::eD32Sfloat)
+                .with_layout(global_set_layout)
+                .with_layout(default_lit_set_layout)
+                .with_layout(material_set_layout)
+                .build_graphics("default_lit_pipeline");   
+            recompile_pipelines = false;
+        }
+        
         camera.update();
         get_context().input->update();
         glfwPollEvents();
@@ -807,7 +866,6 @@ bool Renderer::initialize_imgui() {
 }
 
 bool Renderer::initialize_render_passes() {
-    static std::filesystem::path shader_path = "data/shaders";
     std::vector<std::filesystem::path> shader_paths{
         "default_lit.vert",
         "default_lit.frag",
@@ -819,16 +877,7 @@ bool Renderer::initialize_render_passes() {
     std::vector<std::vector<u32>> irs(shader_paths.size()); 
     #pragma omp parallel for
     for(u32 i=0; i<irs.size(); ++i) {
-        char error[256] = {};
-        auto full_path = shader_path / shader_paths.at(i);
-        auto path_str = full_path.string();
-        auto parent_path_str = shader_path.string();
-        auto file = stb_include_file((char*) path_str.c_str(), 0, (char*)parent_path_str.c_str(), error);
-
-        if(error[0] != 0) {
-            spdlog::error("stb_include: Error {}", error);
-        }
-
+        auto file = read_shader_file(shader_paths.at(i));
         irs.at(i) = compile_shader(shader_paths.at(i).string(), file);
         free(file);
     }
@@ -1126,6 +1175,12 @@ void Renderer::draw_ui() {
         }
     }
     scene_width = ImGui::GetWindowWidth();
+    ImGui::End();
+
+    ImGui::Begin("Shaders");
+    if(ImGui::Button("Recompile default lit")) {
+        recompile_pipelines = true;
+    }
     ImGui::End();
 
     ImGui::Render();

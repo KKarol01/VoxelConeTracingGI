@@ -335,6 +335,7 @@ public:
     Pipeline pp_default_lit;
     Pipeline pp_voxelize;
     Pipeline pp_merge_voxels;
+    bool recompile_pipelines = false;
     
     std::unordered_map<std::string, Model> models;
     Scene scene;

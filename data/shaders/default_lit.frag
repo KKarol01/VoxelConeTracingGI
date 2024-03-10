@@ -114,8 +114,9 @@ float TraceShadowCone(vec3 position, vec3 direction, float aperture, float max_d
 }
 
 vec3 calc_direct_light() {
-    vec3 ambient = vec3(0.0);
+    vec3 ambient = mat.ambient_color.rgb * mat.ambient_color.a;
     vec3 diffuse = vec3(0.0);
+    vec3 specular = vec3(0.0);
     // vec3 frag_nrm = texture(sampler2D(tex_normal, sampler1), frag_uv).rgb;
     vec3 frag_nrm = frag_normal;
     // frag_nrm = normalize(frag_TBN * frag_nrm);
@@ -125,62 +126,42 @@ vec3 calc_direct_light() {
     PointLight point_lights[1];
     point_lights[0].pos = vec3(0.0, 0.65, 0.0);
     point_lights[0].col = vec3(1.0);
-    point_lights[0].att = vec3(0.4, 0.6, 0.6);
+    point_lights[0].att = vec3(0.2, 0.4, 0.6);
     int num_point_lights = 1;
+    vec3 cam_pos = vec3(V * vec4(0.0,0.0,0.0,1.0));
     for(uint i=0; i<num_point_lights; ++i) {
         PointLight pl = point_lights[i];
         vec3 light_dir = pl.pos - frag_pos;
         float dist = length(light_dir);
         light_dir = normalize(light_dir);
 
+        vec3 v = normalize(cam_pos - frag_pos);
+        vec3 h = normalize(v + light_dir);
+        float dotNL = max(dot(frag_normal, light_dir), 0.0);
+        float dotNH = max(dot(frag_normal, h), 0.0);
+        float dotLH = max(dot(light_dir, h), 0.0);
+
+        // vec3 fresnel = mat.specular_color.rgb + (1.0 - mat.specular_color.rgb) * pow(1.0 - dotLH, 5.0);
+        // float spec_str = exp2(11.0 * mat.specular_color.a + 1.0);
+        // vec3 spec = mat.specular_color.rgb * (pow(dotNH, spec_str) * spec_str * 0.039 + 0.318) * fresnel;
+        float spec = pow(dotNH, mat.specular_color.a * 11.0 + 1.0);
+
         float ldotp = max(dot(frag_nrm, light_dir), 0.0);
         float att = 1.0 / (pl.att[0] + pl.att[1]*dist + pl.att[2]*dist*dist);
         // float shadow = max(TraceShadowCone(frag_pos, light_dir, 0.03, dist), 0.0);
-        diffuse += tex_diff * att * pl.col;
+        // shadow = 1.0;
+        diffuse += tex_diff * att * pl.col * mat.diffuse_color.a;
+        specular += spec * dotNL * pl.col;
     }
 
-    return diffuse;
-}
-
-vec4 TraceCone(vec3 position, vec3 normal, vec3 direction, float aperture) {
-    const float voxel_size = 2.0 / 256.0;
-    const vec3 weight = direction*direction;
-
-    float d = voxel_size;
-    position += normal * d;
-    vec3 p = position;
-    vec4 result = vec4(0.0);
-    float occlusion = 0.0;
-    const float max_distance = 3.5;
-    float cur_seg_length = voxel_size;
-
-    while(d < max_distance && result.a < 1.0) {
-        const float diameter = max(voxel_size, 2.0 * tan(aperture));
-        float mip = max(log2(diameter / voxel_size), 0.0);
-        mip = 1.0;
-        const vec3 voxel_coord = vec3(p * 0.5 + 0.5);
-
-        vec4 sample_ = SampleRadiance(voxel_coord, mip);
-        const float correction = diameter / voxel_size;
-        // const float opacity = clamp(1.0 - pow(1.0 - sample_.a, correction), 0.0, 1.0);
-        // sample_.rgb *= correction;
-        // sample_.a = opacity;
-
-        result += (1.0 - result.a) * sample_;
-        // occlusion += (1.0 - occlusion) * sample_.a / (1.0 + (d*128.0 + voxel_size));
-
-        d += diameter; 
-        p = position + direction * d;
-    }
-    
-    return vec4(result.rgb, occlusion);
+    return ambient + diffuse + specular;
 }
 
 vec4 DiffuseCone(const vec3 origin, vec3 dir) {
     const float voxel_size = 2.0 / 256.0;
 	float max_dist = 3.0;
 	float current_dist = voxel_size;
-	float apperture_angle = PI / 6.0; // Angle in Radians.
+	float apperture_angle = PI / 12.0; // Angle in Radians.
 	vec3 color = vec3(0.0);
 	float occlusion = 0.0;
 
@@ -199,7 +180,7 @@ vec4 DiffuseCone(const vec3 origin, vec3 dir) {
         color += (1.0 - occlusion) * color_read;
         occlusion += (1.0 - occlusion) * occlusion_read / (1.0 + current_coneDiameter);
 
-		current_dist += max(current_coneDiameter, voxel_size);
+		current_dist += max(current_coneDiameter, voxel_size) * 0.5;
 	}
 	return vec4(color, occlusion);
 }
@@ -208,11 +189,11 @@ vec4 indirectDiffuse() {
     const float voxel_size = 2.0 / 256.0;
 	const vec3 origin = frag_pos + frag_normal * voxel_size;
 
-    vec3 guide = vec3(0.0f, 1.0f, 0.0f);
+    vec3 guide = vec3(0.0, 1.0, 0.0);
 
     if (abs(dot(frag_normal,guide)) == 1.0f)
     {
-        guide = vec3(0.0f, 0.0f, 1.0f);
+        guide = vec3(0.0, 0.0, 1.0);
     }
 
     // Find a tangent and a bitangent
@@ -227,8 +208,9 @@ vec4 indirectDiffuse() {
         diffuseTrace += DiffuseCone(origin, coneDirection) * max(0.0, dot(coneDirection, frag_normal));
     }
     diffuseTrace /= 16.0;
+    diffuseTrace.rgb *= 0.20;
     diffuseTrace.rgb *= frag_color;
-    vec3 res = diffuseTrace.rgb * 0.2;
+    vec3 res = diffuseTrace.rgb;
     return vec4(res, clamp(1.0 - diffuseTrace.a, 0.0, 1.0));
 } 
 
