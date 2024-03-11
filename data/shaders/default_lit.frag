@@ -159,9 +159,9 @@ vec3 calc_direct_light() {
 
 vec4 DiffuseCone(const vec3 origin, const vec3 dir) {
     const float voxel_size = 2.0 / 256.0;
-	float max_dist = 3.0;
+	float max_dist = 2.0;
 	float current_dist = voxel_size;
-	float apperture_angle = 0.55; // Angle in Radians.
+	float apperture_angle = 0.25; // Angle in Radians.
 	vec3 color = vec3(0.0);
 	float occlusion = 0.0;
 
@@ -178,18 +178,18 @@ vec4 DiffuseCone(const vec3 origin, const vec3 dir) {
 		float occlusion_read = voxel.a;
 
         color += (1.0 - occlusion) * color_read;
-        occlusion += (1.0 - occlusion) * occlusion_read / (1.0 + current_coneDiameter);
+        occlusion += (1.0 - occlusion) * occlusion_read / (1.0 + pow(current_coneDiameter, 16.0));
 
-		current_dist += max(current_coneDiameter, voxel_size);
+		current_dist += max(current_coneDiameter, voxel_size) * 0.8;
 	}
 	return vec4(color, occlusion);
 }
 
 vec4 specular_cone(const vec3 origin, const vec3 dir) {
     const float voxel_size = 2.0 / 256.0;
-	float max_dist = 1.0;
+	float max_dist = 1.5;
 	float current_dist = voxel_size;
-    float apperture_angle = 0.05;
+    float apperture_angle = 0.08;
 	vec3 color = vec3(0.0);
 	float occlusion = 0.0;
     PointLight point_lights[1];
@@ -262,7 +262,7 @@ void main() {
     // vec3 albedo = texture(sampler2D(diffuseTexture, sampler1), frag_uv).rgb;
     vec3 view_pos = vec3(V * vec4(0.0, 0.0, 0.0, 1.0));
     vec4 specular = specular_cone(frag_pos, normalize(reflect(normalize(frag_pos - view_pos), frag_normal)));
-    vec4 indirect = indirectDiffuse();
+    vec4 indirect = pow(indirectDiffuse(), vec4(1.0/2.2));
     // indirect.rgb *=
     vec3 direct = calc_direct_light();
     // direct *= 0.0;

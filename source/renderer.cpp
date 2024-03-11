@@ -469,6 +469,7 @@ void Renderer::draw() {
         auto img = device.acquireNextImageKHR(swapchain, -1ull, fr.swapchain_semaphore).value;
         
         cmd.begin({vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
+        cmd.resetQueryPool(query_pool, 0, 7);
         cmd.bindVertexBuffers(0, scene.vertex_buffer->buffer, 0ull);
         cmd.bindIndexBuffer(scene.index_buffer->buffer, 0, vk::IndexType::eUint32);
 
@@ -476,6 +477,7 @@ void Renderer::draw() {
         cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, pp_default_lit.layout, 0, global_set.set, {});
         cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, pp_voxelize.layout, 1, voxelize_set.set, {});
 
+        cmd.writeTimestamp(vk::PipelineStageFlagBits::eTopOfPipe, query_pool, 0);
         cmd.clearColorImage(voxel_albedo.storage->image, vk::ImageLayout::eGeneral, vk::ClearColorValue{0.0f, 0.0f, 0.0f, 0.0f}, vk::ImageSubresourceRange{vk::ImageAspectFlagBits::eColor, 0, voxel_albedo.storage->mips, 0, 1});
         cmd.clearColorImage(voxel_normal.storage->image, vk::ImageLayout::eGeneral, vk::ClearColorValue{0.0f, 0.0f, 0.0f, 0.0f}, vk::ImageSubresourceRange{vk::ImageAspectFlagBits::eColor, 0, voxel_normal.storage->mips, 0, 1});
         cmd.clearColorImage(voxel_radiance.storage->image, vk::ImageLayout::eGeneral, vk::ClearColorValue{0.0f, 0.0f, 0.0f, 0.0f}, vk::ImageSubresourceRange{vk::ImageAspectFlagBits::eColor, 0, voxel_radiance.storage->mips, 0, 1});
@@ -522,6 +524,8 @@ void Renderer::draw() {
                 
         cmd.endRendering();
 
+        cmd.writeTimestamp(vk::PipelineStageFlagBits::eFragmentShader, query_pool, 1);
+
         cmd.pipelineBarrier(
             vk::PipelineStageFlagBits::eFragmentShader,
             vk::PipelineStageFlagBits::eComputeShader,
@@ -545,6 +549,8 @@ void Renderer::draw() {
         cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, pp_merge_voxels.layout, 0, global_set.set, {});
         cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, pp_merge_voxels.layout, 1, merge_voxels_set.set, {});
         cmd.dispatch(256/8, 256/8, 256/8);
+
+        cmd.writeTimestamp(vk::PipelineStageFlagBits::eComputeShader, query_pool, 2);
 
         cmd.pipelineBarrier(
             vk::PipelineStageFlagBits::eComputeShader,
@@ -578,6 +584,9 @@ void Renderer::draw() {
                 },
                 vk::Filter::eLinear);
         }
+
+        cmd.writeTimestamp(vk::PipelineStageFlagBits::eTransfer, query_pool, 3);
+
         cmd.pipelineBarrier(
             vk::PipelineStageFlagBits::eTransfer,
             vk::PipelineStageFlagBits::eFragmentShader,
@@ -659,6 +668,8 @@ void Renderer::draw() {
             ++idx;
         }
 
+        cmd.writeTimestamp(vk::PipelineStageFlagBits::eFragmentShader, query_pool, 4);
+
         draw_ui();
         
         cmd.endRendering();
@@ -688,6 +699,15 @@ void Renderer::draw() {
         presentation_queue.presentKHR(vk::PresentInfoKHR{
             fr.rendering_semaphore, swapchain, image_indices
         });
+
+        auto result = device.getQueryPoolResults<u64>(query_pool, 0u, 5u, 5u*sizeof(u64), sizeof(u64), vk::QueryResultFlagBits::e64 | vk::QueryResultFlagBits::eWait).value;
+        const float to_ms = tick_length * 0.000001f;
+        float voxelization_time = float(result[1] - result[0]) * to_ms;
+        float compute_radiance_time = float(result[2] - result[1]) * to_ms;
+        float radiance_mip_time = float(result[3] - result[2]) * to_ms;
+        float default_lit_time = float(result[4] - result[3]) * to_ms;
+        spdlog::info("Vox: {:3.2f}, Rad: {:3.2f}, Mip: {:3.2f} Light: {:3.2f}", voxelization_time, compute_radiance_time, radiance_mip_time, default_lit_time);
+        
         device.waitIdle();
     }
 }
@@ -734,6 +754,8 @@ bool Renderer::initialize_vulkan() {
     vk::PhysicalDeviceFeatures2 features;
     vk::PhysicalDeviceDescriptorIndexingFeatures desc_idx_features;
     vk::PhysicalDeviceDynamicRenderingFeatures dyn_rend_features;
+    vk::PhysicalDeviceHostQueryResetFeatures host_query_features;
+    host_query_features.hostQueryReset = true;
     dyn_rend_features.dynamicRendering = true;
     desc_idx_features.descriptorBindingVariableDescriptorCount = true;
     desc_idx_features.descriptorBindingPartiallyBound = true;
@@ -747,6 +769,7 @@ bool Renderer::initialize_vulkan() {
         .add_pNext(&features)
         .add_pNext(&desc_idx_features)
         .add_pNext(&dyn_rend_features)
+        .add_pNext(&host_query_features)
         .build();
     if(!device_builder_result) {
         spdlog::error("Vulkan: failed to create device: {}", device_builder_result.error().message());
@@ -779,6 +802,11 @@ bool Renderer::initialize_vulkan() {
         .get_instance_proc_addr = instance_result->fp_vkGetInstanceProcAddr,
         .get_device_proc_addr = instance_result->fp_vkGetDeviceProcAddr,
     };
+
+    query_pool = device.createQueryPool(vk::QueryPoolCreateInfo{
+        {}, vk::QueryType::eTimestamp, 7
+    });
+    tick_length = physical_device.getProperties().limits.timestampPeriod;
 
     return true;
 }

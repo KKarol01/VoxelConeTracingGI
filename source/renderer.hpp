@@ -336,6 +336,9 @@ public:
     Pipeline pp_voxelize;
     Pipeline pp_merge_voxels;
     bool recompile_pipelines = false;
+
+    vk::QueryPool query_pool;
+    float tick_length;
     
     std::unordered_map<std::string, Model> models;
     Scene scene;
