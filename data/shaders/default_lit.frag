@@ -140,16 +140,11 @@ vec3 calc_direct_light() {
         float dotNL = max(dot(frag_normal, light_dir), 0.0);
         float dotNH = max(dot(frag_normal, h), 0.0);
         float dotLH = max(dot(light_dir, h), 0.0);
-
-        // vec3 fresnel = mat.specular_color.rgb + (1.0 - mat.specular_color.rgb) * pow(1.0 - dotLH, 5.0);
-        // float spec_str = exp2(11.0 * mat.specular_color.a + 1.0);
-        // vec3 spec = mat.specular_color.rgb * (pow(dotNH, spec_str) * spec_str * 0.039 + 0.318) * fresnel;
         float spec = pow(dotNH, mat.specular_color.a * 11.0 + 1.0);
 
         float ldotp = max(dot(frag_nrm, light_dir), 0.0);
         float att = 1.0 / (pl.att[0] + pl.att[1]*dist + pl.att[2]*dist*dist);
-        // float shadow = max(TraceShadowCone(frag_pos, light_dir, 0.03, dist), 0.0);
-        // shadow = 1.0;
+
         diffuse += tex_diff * att * pl.col * mat.diffuse_color.a;
         specular += spec * dotNL * pl.col;
     }
