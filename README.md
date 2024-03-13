@@ -81,6 +81,13 @@ The demo can be downloaded in the Releases section.
 # Summary
 The technique feels very natural and easy to work with. In fact, it was actually used in a video game "The Tomorrow Children". I still have a lot of work to do, especially with Vulkan, but the project at this stage already showed, where the proper API abstractions are needed, and now I know specifically, what job they need to do, which a lack thereof is a bane of many aspiring engine designers.
 
+# How to compile the project
+- Clone the repo
+- Download git submodules with `git submodule update --init --jobs 12 --depth 1`
+- Configure the project with CMake
+- Compile the project
+Last two steps can be simplified by opening the project folder with VSCode with CMakeTools extension
+
 # Used libraries
 - [fastgltf](https://github.com/spnda/fastgltf)
 - [glfw](https://github.com/glfw/glfw#head1234)
