@@ -86,6 +86,7 @@ The technique feels very natural and easy to work with. In fact, it was actually
 - Download git submodules with `git submodule update --init --jobs 12 --depth 1`
 - Configure the project with CMake
 - Compile the project
+
 Last two steps can be simplified by opening the project folder with VSCode with CMakeTools extension
 
 # Used libraries
