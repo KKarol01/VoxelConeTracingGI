@@ -54,7 +54,39 @@ Traversing the voxel structure uses the classical front-to-back accumulation giv
  `opacity = opacity + (1 - opacity) * read_opacity`.
 
 # My results
+Here are my current results:
+![](readme_images/result.png)
 
+The image above was rendered in 1024x768 resolution, the scene contains ~70000 triangles. Each fragment averages the result of 16 diffuse cones, 1 specular cone and produces soft shadows in creases and around occluders.
+The averaged frame times, gathered from 800 frames, in milliseconds, measerued with timestamp hardware queries, are as follows:
+Voxelization | Radiance volume | Isotropic mipmaps | Lighting
+:--:|:--:|:--:|:--:|
+0.97ms|4.96ms|0.09ms|5.1ms
+
+Do keep in mind, that for static scenes, voxelization, radiance volume computation and isotropic mipmaps need not recalculating, and as such, only the lighting pass should happen. The times given above, especially in the lighting pass, will change, for the better I hope, as I optimize the code and tune the parameters.
+
+The demo can be downloaded in the Releases section.
+
+# To-do
+- [ ] Anisotropic voxels
+- [ ] Swapchain resizing
+- [ ] Render graph for layout transitions and cache invalidations and flushes
+- [ ] Deletion queue
+- [ ] Proper materials
+- [ ] Scene graph
+- [ ] More lights
+- [ ] Clipmaps for bigger scenes
+- [ ] Textures
 
 # Summary
-Here are my current results:
+The technique feels very natural and easy to work with. In fact, it was actually used in a video game "The Tomorrow Children". I still have a lot of work to do, especially with Vulkan, but the project at this stage already showed, where the proper API abstractions are needed, and now I know specifically, what job they need to do, which a lack thereof is a bane of many aspiring engine designers.
+
+# Used libraries
+- [fastgltf](https://github.com/spnda/fastgltf)
+- [glfw](https://github.com/glfw/glfw#head1234)
+- [glm](https://github.com/g-truc/glm)
+- [dear imgui](https://github.com/ocornut/imgui)
+- [stb_image stb_include](https://github.com/nothings/stb)
+- [spdlog](https://github.com/gabime/spdlog)
+- [vk-bootstrap](https://github.com/charles-lunarg/vk-bootstrap)
+- [VulkanMemoryAllocator](https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator)
