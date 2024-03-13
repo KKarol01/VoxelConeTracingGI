@@ -182,7 +182,7 @@ vec4 DiffuseCone(const vec3 origin, const vec3 dir) {
 
 vec4 specular_cone(const vec3 origin, const vec3 dir) {
     const float voxel_size = 2.0 / 256.0;
-	float max_dist = 1.5;
+	float max_dist = 2.0;
 	float current_dist = voxel_size;
     float apperture_angle = 0.08;
 	vec3 color = vec3(0.0);
