@@ -43,5 +43,9 @@ add_library(imgui STATIC
     third_party/imgui/backends/imgui_impl_glfw.cpp
 )
 target_include_directories(imgui PUBLIC third_party/imgui ${Vulkan_INCLUDE_DIRS} third_party/glfw/include)
+target_compile_definitions(imgui 
+    PRIVATE 
+        IMGUI_IMPL_VULKAN_NO_PROTOTYPES
+)
 
 add_subdirectory(source)

@@ -1,5 +1,6 @@
 #pragma once
 #include "types.hpp"
+#include "renderer_types.hpp"
 #include "context.hpp"
 #include "input.hpp"
 #include <vk_mem_alloc.h>
@@ -11,6 +12,8 @@
 #include <filesystem>
 #include <array>
 #include <unordered_map>
+
+class RenderGraph;
 
 struct DescriptorInfo {
     enum Resource : u8 { None=0, Buffer=1, Image=2, Sampler=3 };
@@ -45,96 +48,6 @@ struct DescriptorSet {
     void update_bindings(vk::Device device, u32 dst_binding, u32 dst_arr_element, std::span<DescriptorInfo> infos);
     
     vk::DescriptorSet set;
-};
-
-class Renderer;
-
-struct Pipeline {
-    vk::Pipeline pipeline;
-    vk::PipelineLayout layout;
-};
-
-class PipelineBuilder {
-public:
-    PipelineBuilder(const Renderer* renderer): renderer(renderer) {}
-
-    PipelineBuilder& with_shaders(const std::vector<std::pair<vk::ShaderStageFlagBits, vk::ShaderModule>>& shaders) {
-        this->shaders = shaders;        
-        return *this;
-    }
-
-    PipelineBuilder &with_vertex_input(
-        const std::vector<vk::VertexInputBindingDescription> &bindings,
-        const std::vector<vk::VertexInputAttributeDescription> &attributes) {
-        this->bindings = bindings;
-        this->attributes = attributes;
-        return *this;
-    }
-
-    PipelineBuilder& with_culling(vk::CullModeFlagBits culling, vk::FrontFace front_face) {
-        cull_mode = culling;
-        this->front_face = front_face;
-        return *this;
-    } 
-
-    PipelineBuilder& with_depth_testing(bool depth_test, bool depth_write, vk::CompareOp depth_compare) {
-        this->depth_test = depth_test;
-        this->depth_write = depth_write;
-        this->depth_compare = depth_compare;
-        return *this;
-    }
-
-    PipelineBuilder& with_layout(vk::DescriptorSetLayout set) {
-        set_layouts.push_back(set);
-        return *this;
-    }
-
-    PipelineBuilder& with_color_attachments(const std::vector<vk::Format>& formats) {
-        color_attachment_formats = formats;
-        return *this;
-    }
-
-    PipelineBuilder& with_depth_attachment(vk::Format format) {
-        depth_attachment_format = format;
-        return *this;
-    }
-
-    Pipeline build_graphics(std::string_view label);
-
-    Pipeline build_compute(std::string_view label);
-
-private:
-    const Renderer* renderer;
-    std::vector<std::pair<vk::ShaderStageFlagBits, vk::ShaderModule>> shaders;
-    std::vector<vk::VertexInputBindingDescription> bindings;
-    std::vector<vk::VertexInputAttributeDescription> attributes;
-    vk::CullModeFlagBits cull_mode{vk::CullModeFlagBits::eBack};
-    vk::FrontFace front_face{vk::FrontFace::eCounterClockwise};
-    bool depth_test{true};
-    bool depth_write{true};
-    vk::CompareOp depth_compare{vk::CompareOp::eLess};
-    std::vector<vk::DescriptorSetLayout> set_layouts;
-    std::vector<vk::Format> color_attachment_formats;
-    vk::Format depth_attachment_format{vk::Format::eUndefined};
-};
-
-struct GpuBuffer {
-    vk::Buffer buffer;
-    void* data;
-    u64 size;
-    VmaAllocation alloc;
-};
-
-struct Window {
-    u32 width{1024}, height{768};
-    GLFWwindow* window{nullptr};
-};
-
-struct FrameResources {
-    vk::CommandPool pool;
-    vk::CommandBuffer cmd;
-    vk::Semaphore swapchain_semaphore, rendering_semaphore;
-    vk::Fence in_flight_fence;
 };
 
 struct Vertex {
@@ -173,29 +86,6 @@ struct Scene {
     GpuBuffer* material_buffer;
 };
 
-struct TextureStorage {
-    vk::ImageType type;
-    u32 width, height, depth;
-    u32 mips, layers;
-    vk::Format format;
-    vk::ImageLayout current_layout;
-    vk::Image image;
-    VmaAllocation alloc;
-};
-
-struct Texture2D {
-    Texture2D() = default;
-    Texture2D(u32 width, u32 height, vk::Format format, u32 mips, vk::ImageUsageFlags usage); 
-
-    TextureStorage* storage{};
-};
-
-struct Texture3D {
-    Texture3D() = default;
-    Texture3D(u32 width, u32 height, u32 depth, vk::Format format, u32 mips, vk::ImageUsageFlags usage); 
-
-    TextureStorage* storage{};
-};
 
 template<typename VkObject> struct VulkanObjectType;
 template<> struct VulkanObjectType<vk::SwapchainKHR> { static inline constexpr vk::ObjectType type = vk::ObjectType::eSwapchainKHR; };
@@ -339,6 +229,8 @@ public:
 
     vk::QueryPool query_pool;
     float tick_length;
+    
+    RenderGraph* render_graph; 
     
     std::unordered_map<std::string, Model> models;
     Scene scene;

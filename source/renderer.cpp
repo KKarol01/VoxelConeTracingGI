@@ -1,5 +1,9 @@
 #include "renderer.hpp"
 #include "input.hpp"
+#include "pipelines.hpp"
+#include "render_graph.hpp"
+#include <vulkan/vulkan.hpp>
+VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE
 #include <spdlog/spdlog.h>
 #include <fastgltf/core.hpp>
 #include <fastgltf/types.hpp>
@@ -48,157 +52,6 @@ void DescriptorSet::update_bindings(vk::Device device, u32 dst_binding, u32 dst_
     }
 
     device.updateDescriptorSets(writes, {});
-}
-
-Pipeline PipelineBuilder::build_graphics(std::string_view label) {
-    std::vector<vk::PipelineShaderStageCreateInfo> stages;
-    for(const auto& shader : shaders) { 
-        stages.push_back(vk::PipelineShaderStageCreateInfo{{}, shader.first, shader.second, "main"}); 
-    }
-
-    vk::PipelineVertexInputStateCreateInfo   VertexInputState_   = {
-        {}, bindings, attributes
-    };
-
-    vk::PipelineInputAssemblyStateCreateInfo InputAssemblyState_ = {
-        {}, vk::PrimitiveTopology::eTriangleList
-    };
-
-    vk::PipelineTessellationStateCreateInfo  TessellationState_  = {};
-
-    vk::PipelineViewportStateCreateInfo      ViewportState_      = {};
-
-    vk::PipelineRasterizationStateCreateInfo RasterizationState_ = {
-        {}, 
-        false,
-        false,
-        vk::PolygonMode::eFill,
-        cull_mode,
-        front_face,
-        false,
-        0.0f,
-        false,
-        0.0f,
-        1.0f
-    };
-
-    vk::PipelineMultisampleStateCreateInfo   MultisampleState_   = {};
-
-    vk::PipelineDepthStencilStateCreateInfo  DepthStencilState_  = {
-        {},
-        depth_test,
-        depth_write,
-        depth_compare,
-        false, 
-        false,
-        {},
-        {},
-        0.0f,
-        1.0f,
-    };
-
-    vk::PipelineColorBlendAttachmentState    ColorBlendAtt1_     = {
-        false,
-        vk::BlendFactor::eOne,
-        vk::BlendFactor::eZero,
-        vk::BlendOp::eAdd,
-        vk::BlendFactor::eOne,
-        vk::BlendFactor::eZero,
-        vk::BlendOp::eAdd,
-        vk::ColorComponentFlagBits::eR | 
-        vk::ColorComponentFlagBits::eG | 
-        vk::ColorComponentFlagBits::eB | 
-        vk::ColorComponentFlagBits::eA
-    };
-
-    vk::PipelineColorBlendStateCreateInfo    ColorBlendState_    = {
-        {},
-        false,
-        vk::LogicOp::eClear,
-        ColorBlendAtt1_
-    };
-
-    vk::DynamicState                         DynamicStates[] = {
-        vk::DynamicState::eScissorWithCount,
-        vk::DynamicState::eViewportWithCount
-    };
-
-    vk::PipelineDynamicStateCreateInfo       DynamicState_       = {
-        {}, DynamicStates            
-    };
-
-    vk::PipelineLayoutCreateInfo layout_info = {
-        {},
-        set_layouts,
-        {}
-    };
-
-    vk::PipelineLayout layout_ = renderer->device.createPipelineLayout(layout_info);
-    set_debug_name(renderer->device, layout_, std::format("{}_layout", label));
-
-    vk::PipelineRenderingCreateInfo dynamic_rendering = {
-        {}, color_attachment_formats, depth_attachment_format
-    };
-
-    // vk::PipelineRasterizationConservativeStateCreateInfoEXT conservative_rasterization = {
-    //     {}, vk::ConservativeRasterizationModeEXT::eOverestimate
-    // };
-    // RasterizationState_.pNext = &conservative_rasterization;
-
-    vk::GraphicsPipelineCreateInfo info{
-        {},
-        stages,
-        &VertexInputState_,
-        &InputAssemblyState_,
-        &TessellationState_,
-        &ViewportState_,
-        &RasterizationState_,
-        &MultisampleState_,
-        &DepthStencilState_,
-        &ColorBlendState_,
-        &DynamicState_,
-        layout_,
-        {},
-        {},
-        {},
-        {},
-        &dynamic_rendering
-    };
-
-    auto pipeline = renderer->device.createGraphicsPipelines({}, info).value[0];
-    set_debug_name(renderer->device, pipeline, label);
-
-    return Pipeline{
-        .pipeline = pipeline,
-        .layout = layout_
-    };
-} 
-
-Pipeline PipelineBuilder::build_compute(std::string_view label) {
-    vk::PipelineLayoutCreateInfo layout_info = {
-        {},
-        set_layouts,
-        {}
-    };
-
-    vk::PipelineLayout layout_ = renderer->device.createPipelineLayout(layout_info);
-    set_debug_name(renderer->device, layout_, std::format("{}_layout", label));
-    
-    vk::ComputePipelineCreateInfo info{
-        {},
-        vk::PipelineShaderStageCreateInfo{
-            {}, shaders.at(0).first, shaders.at(0).second, "main"
-        },
-        layout_
-    };
-
-    auto pipeline = renderer->device.createComputePipeline({}, info).value;
-    set_debug_name(renderer->device, pipeline, label);
-
-    return Pipeline{
-        .pipeline = pipeline,
-        .layout = layout_
-    };
 }
 
 Texture2D::Texture2D(u32 width, u32 height, vk::Format format, u32 mips, vk::ImageUsageFlags usage) {
@@ -718,6 +571,8 @@ bool Renderer::initialize_vulkan() {
         return false;
     }
 
+    VULKAN_HPP_DEFAULT_DISPATCHER.init();
+
     vkb::InstanceBuilder instance_builder;
     auto instance_result = instance_builder
         .set_app_name("vxgi")
@@ -732,6 +587,7 @@ bool Renderer::initialize_vulkan() {
         return false;
     }
     instance = instance_result->instance;
+    VULKAN_HPP_DEFAULT_DISPATCHER.init(instance);
 
     VkSurfaceKHR _surface;
     glfwCreateWindowSurface(instance, window, 0, &_surface);
@@ -776,6 +632,7 @@ bool Renderer::initialize_vulkan() {
         return false;
     }
     device = device_builder_result->device;
+    VULKAN_HPP_DEFAULT_DISPATCHER.init(device);
 
     graphics_queue_idx = device_builder_result->get_queue_index(vkb::QueueType::graphics).value();
     presentation_queue_idx = device_builder_result->get_queue_index(vkb::QueueType::present).value();
@@ -885,6 +742,10 @@ bool Renderer::initialize_imgui() {
         0, swapchain_format, depth_texture.storage->format
     };
 
+    ImGui_ImplVulkan_LoadFunctions([](const char* function_name, void* user_data) {
+        return VULKAN_HPP_DEFAULT_DISPATCHER.vkGetInstanceProcAddr(get_context().renderer->instance, function_name);
+    });
+
     if(!ImGui_ImplVulkan_Init(&init_info)) {
         spdlog::error("IMGUI: could not init vulkan impl");
         return false;
@@ -894,6 +755,8 @@ bool Renderer::initialize_imgui() {
 }
 
 bool Renderer::initialize_render_passes() {
+    render_graph = new RenderGraph{};
+    
     std::vector<std::filesystem::path> shader_paths{
         "default_lit.vert",
         "default_lit.frag",
@@ -1161,6 +1024,105 @@ bool Renderer::initialize_render_passes() {
     get_frame_res().cmd.end();
     graphics_queue.submit(vk::SubmitInfo{{}, {}, get_frame_res().cmd});
     graphics_queue.waitIdle();
+
+    const auto res_voxel_albedo = render_graph->add_resource(RGResource{"voxel_albedo", voxel_albedo.storage});
+    const auto res_voxel_normal = render_graph->add_resource(RGResource{"voxel_normal", voxel_normal.storage});
+    const auto res_voxel_radiance = render_graph->add_resource(RGResource{"voxel_radiance", voxel_radiance.storage});
+
+    RenderPass pass_voxelization;
+    pass_voxelization
+        .set_name("voxelization")
+        .set_rendering_extent(RenderPassRenderingExtent{
+            .viewport = {0.0f, 0.0f, 256.0f, 256.0f, 0.0f, 1.0f},
+            .scissor = {0, 0, 256, 256}
+        })
+        .write_to_color_image(RPResource{
+            res_voxel_albedo,
+            RGSyncStage::Fragment,
+            TextureInfo{
+                .required_layout = RGImageLayout::General,
+            }
+        })
+        .write_to_color_image(RPResource{
+            res_voxel_normal,
+            RGSyncStage::Fragment,
+            TextureInfo{
+                .required_layout = RGImageLayout::General,
+            }
+        });
+    render_graph->add_render_pass(std::move(pass_voxelization));
+
+    RenderPass pass_radiance_inject;
+    pass_radiance_inject
+        .set_name("radiance_inject")
+        .set_rendering_extent(RenderPassRenderingExtent{
+            .viewport = {0.0f, 0.0f, 256.0f, 256.0f, 0.0f, 1.0f},
+            .scissor = {0, 0, 256, 256}
+        })
+        .add_read_resource(RPResource{
+            res_voxel_albedo, 
+            RGSyncStage::Compute,
+            TextureInfo{
+                .required_layout = RGImageLayout::General
+            }
+        })
+        .add_read_resource(RPResource{
+            res_voxel_normal, 
+            RGSyncStage::Compute,
+            TextureInfo{
+                .required_layout = RGImageLayout::General
+            }
+        })
+        .write_to_color_image(RPResource{
+            res_voxel_radiance, 
+            RGSyncStage::Compute,
+            TextureInfo{
+                .required_layout = RGImageLayout::General,
+            }
+        });
+    render_graph->add_render_pass(std::move(pass_radiance_inject));
+
+    for(u32 i=1; i<voxel_radiance.storage->mips; ++i) {
+        RenderPass mip_pass;
+        mip_pass
+            .set_name(std::format("radiance_mip_{}", i))
+            .add_read_resource(RPResource{
+                res_voxel_radiance, 
+                RGSyncStage::Transfer,
+                TextureInfo{
+                    .required_layout = RGImageLayout::TransferSrc,
+                    .range = {i-1, 1, 0, 1}
+                }
+            })
+            .write_to_color_image(RPResource{
+                res_voxel_radiance, 
+                RGSyncStage::Transfer,
+                TextureInfo{
+                    .required_layout = RGImageLayout::TransferDst,
+                    .range = {i, 1, 0, 1}
+                }
+            });
+        render_graph->add_render_pass(std::move(mip_pass));
+    }
+        
+    RenderPass pass_default_lit;
+    pass_default_lit
+        .set_name("default_lit")
+        .set_rendering_extent(RenderPassRenderingExtent{
+            .viewport = {0.0f, 0.0f, 1920.0f, 1080.0f, 0.0f, 1.0f},
+            .scissor = {0, 0, 1920, 1080}
+        })
+        .add_read_resource(RPResource{
+            res_voxel_radiance, 
+            RGSyncStage::Fragment,
+            TextureInfo{
+                .required_layout = RGImageLayout::General,
+                .range = {0, voxel_radiance.storage->mips, 0, 1}
+            }
+        });
+    render_graph->add_render_pass(std::move(pass_default_lit));
+
+    render_graph->bake_graph();
 
     return true;
 }

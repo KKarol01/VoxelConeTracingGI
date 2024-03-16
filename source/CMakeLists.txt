@@ -9,6 +9,8 @@ add_executable(vxgi
     renderer.cpp
     context.cpp
     input.cpp
+    render_graph.cpp
+    pipelines.cpp
 )
 
 target_compile_options(vxgi
@@ -27,6 +29,14 @@ target_compile_definitions(vxgi
         _CRT_SECURE_NO_WARNINGS
         WIN32_LEAN_AND_MEAN
         NOMINMAX
+        VULKAN_HPP_DISPATCH_LOADER_DYNAMIC=1
+)
+
+target_precompile_headers(vxgi
+    PRIVATE
+        <vulkan/vulkan.hpp>
+        <spdlog/spdlog.h>
+        <shaderc/shaderc.hpp>
 )
 
 target_include_directories(vxgi
@@ -50,7 +60,6 @@ target_link_libraries(vxgi
         fastgltf
         stb
         imgui
-        vulkan-1
 	$<$<CONFIG:Debug>: shaderc_sharedd>
 	$<$<CONFIG:Release>: shaderc_shared>
         libomp
