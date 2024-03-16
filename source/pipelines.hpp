@@ -14,7 +14,7 @@ class PipelineBuilder {
 public:
     PipelineBuilder(const Renderer* renderer): renderer(renderer) {}
 
-    PipelineBuilder& with_shaders(const std::vector<std::pair<vk::ShaderStageFlagBits, vk::ShaderModule>>& shaders) {
+    PipelineBuilder& with_shaders(const std::vector<std::pair<vk::ShaderStageFlagBits, Shader*>>& shaders) {
         this->shaders = shaders;        
         return *this;
     }
@@ -40,11 +40,6 @@ public:
         return *this;
     }
 
-    PipelineBuilder& with_layout(vk::DescriptorSetLayout set) {
-        set_layouts.push_back(set);
-        return *this;
-    }
-
     PipelineBuilder& with_color_attachments(const std::vector<vk::Format>& formats) {
         color_attachment_formats = formats;
         return *this;
@@ -60,8 +55,10 @@ public:
     Pipeline build_compute(std::string_view label);
 
 private:
+    PipelineLayout coalesce_shader_resources_into_layout();
+
     const Renderer* renderer;
-    std::vector<std::pair<vk::ShaderStageFlagBits, vk::ShaderModule>> shaders;
+    std::vector<std::pair<vk::ShaderStageFlagBits, Shader*>> shaders;
     std::vector<vk::VertexInputBindingDescription> bindings;
     std::vector<vk::VertexInputAttributeDescription> attributes;
     vk::CullModeFlagBits cull_mode{vk::CullModeFlagBits::eBack};
@@ -69,7 +66,6 @@ private:
     bool depth_test{true};
     bool depth_write{true};
     vk::CompareOp depth_compare{vk::CompareOp::eLess};
-    std::vector<vk::DescriptorSetLayout> set_layouts;
     std::vector<vk::Format> color_attachment_formats;
     vk::Format depth_attachment_format{vk::Format::eUndefined};
 };

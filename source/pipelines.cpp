@@ -84,7 +84,7 @@ std::vector<ShaderResource> get_shader_resources(const std::vector<u32>& ir) {
 Pipeline PipelineBuilder::build_graphics(std::string_view label) {
     std::vector<vk::PipelineShaderStageCreateInfo> stages;
     for(const auto& shader : shaders) { 
-        stages.push_back(vk::PipelineShaderStageCreateInfo{{}, shader.first, shader.second, "main"}); 
+        stages.push_back(vk::PipelineShaderStageCreateInfo{{}, shader.first, shader.second->module, "main"}); 
     }
 
     vk::PipelineVertexInputStateCreateInfo   VertexInputState_   = {
@@ -158,14 +158,8 @@ Pipeline PipelineBuilder::build_graphics(std::string_view label) {
         {}, DynamicStates            
     };
 
-    vk::PipelineLayoutCreateInfo layout_info = {
-        {},
-        set_layouts,
-        {}
-    };
-
-    vk::PipelineLayout layout_ = renderer->device.createPipelineLayout(layout_info);
-    set_debug_name(renderer->device, layout_, std::format("{}_layout", label));
+    PipelineLayout layout = coalesce_shader_resources_into_layout();
+    set_debug_name(renderer->device, layout.layout, std::format("{}_layout", label));
 
     vk::PipelineRenderingCreateInfo dynamic_rendering = {
         {}, color_attachment_formats, depth_attachment_format
@@ -188,7 +182,7 @@ Pipeline PipelineBuilder::build_graphics(std::string_view label) {
         &DepthStencilState_,
         &ColorBlendState_,
         &DynamicState_,
-        layout_,
+        layout.layout,
         {},
         {},
         {},
@@ -201,26 +195,20 @@ Pipeline PipelineBuilder::build_graphics(std::string_view label) {
 
     return Pipeline{
         .pipeline = pipeline,
-        .layout = layout_
+        .layout = layout
     };
 } 
 
 Pipeline PipelineBuilder::build_compute(std::string_view label) {
-    vk::PipelineLayoutCreateInfo layout_info = {
-        {},
-        set_layouts,
-        {}
-    };
-
-    vk::PipelineLayout layout_ = renderer->device.createPipelineLayout(layout_info);
-    set_debug_name(renderer->device, layout_, std::format("{}_layout", label));
+    PipelineLayout layout = coalesce_shader_resources_into_layout();
+    set_debug_name(renderer->device, layout.layout, std::format("{}_layout", label));
     
     vk::ComputePipelineCreateInfo info{
         {},
         vk::PipelineShaderStageCreateInfo{
-            {}, shaders.at(0).first, shaders.at(0).second, "main"
+            {}, shaders.at(0).first, shaders.at(0).second->module, "main"
         },
-        layout_
+        layout.layout
     };
 
     auto pipeline = renderer->device.createComputePipeline({}, info).value;
@@ -228,6 +216,74 @@ Pipeline PipelineBuilder::build_compute(std::string_view label) {
 
     return Pipeline{
         .pipeline = pipeline,
-        .layout = layout_
+        .layout = layout
     };
+}
+
+static vk::DescriptorType to_vk_desc_type(DescriptorType type) {
+    switch (type) {
+        using enum DescriptorType;
+        case SampledImage:   { return vk::DescriptorType::eSampledImage; }
+        case StorageImage:   { return vk::DescriptorType::eStorageImage; }
+        case Sampler:        { return vk::DescriptorType::eSampler; }
+        case UniformBuffer:  { return vk::DescriptorType::eUniformBuffer; }
+        case StorageBuffer:  { return vk::DescriptorType::eStorageBuffer; }
+        default: {
+            spdlog::error("Unrecognized descriptor type: {}", (u32)type);
+            std::abort(); 
+            return vk::DescriptorType::eSampler;
+        }
+    }
+}
+
+PipelineLayout PipelineBuilder::coalesce_shader_resources_into_layout() {
+    PipelineLayout layout;
+    std::vector<std::vector<vk::DescriptorSetLayoutBinding>> layout_bindings(PipelineLayout::MAX_DESCRIPTOR_SET_COUNT);
+    static constexpr vk::ShaderStageFlags ALL_STAGE_FLAGS = 
+        vk::ShaderStageFlagBits::eFragment | 
+        vk::ShaderStageFlagBits::eVertex |
+        vk::ShaderStageFlagBits::eCompute;
+
+    const auto get_set_bindings = [&layout](u32 set) {
+        return layout.descriptor_sets.at(set).bindings;
+    };
+
+    const auto find_binding_in_set = [&](u32 set, u32 binding) {
+        return std::find_if(begin(get_set_bindings(set)), end(get_set_bindings(set)), [binding](auto&& a) {
+            return a.binding == binding;
+        });
+    };
+        
+    for(const auto& sh : shaders) {
+        for(const auto &r : sh.second->resources) {
+            if(find_binding_in_set(r.descriptor_set, r.resource.binding) != end(get_set_bindings(r.descriptor_set))) {
+                spdlog::info("Descriptor set={} already contains binding={}. Skipping", r.descriptor_set, r.resource.binding); 
+                continue;
+            }
+            layout.descriptor_sets.at(r.descriptor_set).bindings.push_back(r.resource);
+            layout_bindings.at(r.descriptor_set).push_back(vk::DescriptorSetLayoutBinding{
+                r.resource.binding,
+                to_vk_desc_type(r.resource.type),
+                1,
+                ALL_STAGE_FLAGS
+            });
+        }
+    }
+
+    std::vector<vk::DescriptorSetLayout> set_layouts(PipelineLayout::MAX_DESCRIPTOR_SET_COUNT);
+    for(u32 i=0; auto& lb : layout_bindings) {
+        layout.descriptor_sets.at(i).layout = get_context().renderer->device.createDescriptorSetLayout(vk::DescriptorSetLayoutCreateInfo{
+            {},
+            lb
+        });
+        set_layouts.at(i) = layout.descriptor_sets.at(i).layout;
+        ++i;
+    }
+
+    layout.layout = get_context().renderer->device.createPipelineLayout(vk::PipelineLayoutCreateInfo{
+        {},
+        set_layouts
+    });
+
+    return layout;
 }
