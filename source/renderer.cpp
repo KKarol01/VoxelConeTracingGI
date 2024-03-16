@@ -11,7 +11,6 @@ VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE
 #include <fastgltf/glm_element_traits.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <VkBootstrap.h>
-#include <shaderc/shaderc.hpp>
 #include <stb/stb_include.h>
 #include <imgui/imgui.h>
 #include <imgui/backends/imgui_impl_glfw.h>
@@ -242,21 +241,6 @@ void Renderer::setup_scene() {
         DescriptorInfo{vk::DescriptorType::eStorageBuffer, scene.material_buffer->buffer, 0ull, vk::WholeSize},
     };
     material_set.update_bindings(device, 0, 0, material_set_infos);
-}
-
-static char* read_shader_file(const std::filesystem::path& path) {
-    static std::filesystem::path shader_path = "data/shaders";
-    char error[256] = {};
-    auto full_path = shader_path / path;
-    auto path_str = full_path.string();
-    auto parent_path_str = shader_path.string();
-    auto file = stb_include_file((char*) path_str.c_str(), 0, (char*)parent_path_str.c_str(), error);
-
-    if(error[0] != 0) {
-        spdlog::error("stb_include: Error {}", error);
-    }
-
-    return file;
 }
 
 void Renderer::draw() {
@@ -766,17 +750,21 @@ bool Renderer::initialize_render_passes() {
         "merge_voxels.comp",
     };
     std::vector<std::vector<u32>> irs(shader_paths.size()); 
+    std::vector<std::vector<ShaderResource>> shader_resources(shader_paths.size());
     #pragma omp parallel for
     for(u32 i=0; i<irs.size(); ++i) {
-        auto file = read_shader_file(shader_paths.at(i));
-        irs.at(i) = compile_shader(shader_paths.at(i).string(), file);
-        free(file);
+        irs.at(i) = compile_glsl_to_spv(shader_paths.at(i));
+        shader_resources.at(i) = get_shader_resources(irs.at(i));
     }
     
-    std::vector<vk::ShaderModule> modules(irs.size());
+    std::vector<Shader> shaders(irs.size());
     for(u32 i=0; const auto& ir : irs) {
-        modules.at(i) = device.createShaderModule(vk::ShaderModuleCreateInfo{{}, ir.size() * sizeof(u32), ir.data()});
-        set_debug_name(device, modules.at(i), shader_paths.at(i).string());
+        shaders.at(i) = Shader{
+            .path = shader_paths.at(i).string(),
+            .module = device.createShaderModule(vk::ShaderModuleCreateInfo{{}, ir.size() * sizeof(u32), ir.data()}),
+            .resources = shader_resources.at(i)
+        };
+        set_debug_name(device, shaders.at(i).module, shader_paths.at(i).string());
         ++i;
     }
 
@@ -1175,15 +1163,4 @@ void Renderer::draw_ui() {
 
     ImGui::Render();
     ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), get_frame_res().cmd);
-}
-
-std::vector<u32> Renderer::compile_shader(std::string_view filename, std::string_view file) {
-    shaderc::Compiler compiler;
-    auto result = compiler.CompileGlslToSpv(file.data(), shaderc_glsl_infer_from_source, filename.data());
-    if(result.GetCompilationStatus() != shaderc_compilation_status_success) {
-        spdlog::error("Shader {} compilation error: {}", filename, result.GetErrorMessage().c_str());
-        return {};
-    }
-
-    return std::vector<u32>{result.begin(), result.end()};
 }

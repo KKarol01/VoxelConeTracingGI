@@ -177,7 +177,6 @@ private:
     }
 
     FrameResources& get_frame_res() { return frames.at(frame_number % FRAMES_IN_FLIGHT); }
-    std::vector<u32> compile_shader(std::string_view filename, std::string_view file);
 
 public:
     static constexpr inline u32 FRAMES_IN_FLIGHT = 2;

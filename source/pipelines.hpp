@@ -2,8 +2,13 @@
 #include "renderer_types.hpp"
 #include <vector>
 #include <string_view>
+#include <filesystem>
 
 class Renderer;
+
+std::vector<u32> compile_glsl_to_spv(const std::filesystem::path& path);
+std::vector<ShaderResource> get_shader_resources(const std::vector<u32>& ir);
+Shader build_shader_from_spv(const std::vector<u32>& ir);
 
 class PipelineBuilder {
 public:

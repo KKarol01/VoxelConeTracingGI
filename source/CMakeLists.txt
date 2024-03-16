@@ -37,6 +37,7 @@ target_precompile_headers(vxgi
         <vulkan/vulkan.hpp>
         <spdlog/spdlog.h>
         <shaderc/shaderc.hpp>
+        <spirv_cross/spirv_cross.hpp>
 )
 
 target_include_directories(vxgi

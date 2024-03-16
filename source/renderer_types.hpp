@@ -2,13 +2,45 @@
 #include "types.hpp"
 #include <vulkan/vulkan_structs.hpp>
 #include <vk_mem_alloc.h>
+#include <vector>
+#include <array>
 
-struct GLFWwindow;
+enum class DescriptorType {
+    None, SampledImage, StorageImage, Sampler, UniformBuffer, StorageBuffer
+};
 
-/* Rendering resources */
+struct DescriptorBinding {
+    std::string name;
+    DescriptorType type;
+    u32 binding;
+};
+
+struct DescriptorLayout {
+    vk::DescriptorSetLayout layout;
+    std::vector<DescriptorBinding> bindings;
+};
+
+struct ShaderResource {
+    u32 descriptor_set;
+    DescriptorBinding resource;
+};
+
+struct Shader {
+    std::string path;
+    vk::ShaderModule module;
+    std::vector<ShaderResource> resources;
+};
+
+struct PipelineLayout {
+    static inline constexpr u32 MAX_DESCRIPTOR_SET_COUNT = 4u;
+
+    vk::PipelineLayout layout;
+    std::array<DescriptorLayout, MAX_DESCRIPTOR_SET_COUNT> descriptor_sets;
+};
+
 struct Pipeline {
     vk::Pipeline pipeline;
-    vk::PipelineLayout layout;
+    PipelineLayout layout;
 };
 
 struct GpuBuffer {
@@ -50,8 +82,7 @@ struct Texture3D {
     TextureStorage* storage{};
 };
 
-/* === */
-
+struct GLFWwindow;
 struct Window {
     u32 width{1024}, height{768};
     GLFWwindow* window{nullptr};

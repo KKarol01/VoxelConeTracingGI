@@ -1,5 +1,85 @@
 #include "pipelines.hpp"
 #include "renderer.hpp"
+#include <spdlog/spdlog.h>
+#include <shaderc/shaderc.hpp>
+#include <spirv_cross/spirv_cross.hpp>
+#include <stb/stb_include.h>
+
+static char* read_shader_file(const std::filesystem::path& path) {
+    static std::filesystem::path shader_path = "data/shaders";
+    char error[256] = {};
+    auto full_path = shader_path / path;
+    auto path_str = full_path.string();
+    auto parent_path_str = shader_path.string();
+    auto file = stb_include_file((char*) path_str.c_str(), 0, (char*)parent_path_str.c_str(), error);
+
+    if(error[0] != 0) {
+        spdlog::error("stb_include: Error {}", error);
+    }
+
+    return file;
+}
+
+std::vector<u32> compile_glsl_to_spv(const std::filesystem::path& path) {
+    auto file = read_shader_file(path);
+    shaderc::Compiler compiler;
+    auto result = compiler.CompileGlslToSpv(file, shaderc_glsl_infer_from_source, path.filename().string().c_str());
+    if(result.GetCompilationStatus() != shaderc_compilation_status_success) {
+        spdlog::error("Shader {} compilation error: {}", path.filename().string(), result.GetErrorMessage().c_str());
+        return {};
+    }
+    free(file);
+
+    return std::vector<u32>{result.begin(), result.end()};
+}
+
+std::vector<ShaderResource> get_shader_resources(const std::vector<u32>& ir) {
+    spirv_cross::Compiler compiler{ir}; 
+    const auto& resources = compiler.get_shader_resources();
+
+    const spirv_cross::SmallVector<spirv_cross::Resource>* resources_list[] {
+        &resources.sampled_images,
+        &resources.storage_images,
+        &resources.separate_samplers,
+        &resources.uniform_buffers,
+        &resources.storage_buffers,
+    };
+    DescriptorType resource_types[] {
+        DescriptorType::SampledImage,
+        DescriptorType::StorageImage,
+        DescriptorType::Sampler,
+        DescriptorType::UniformBuffer,
+        DescriptorType::StorageBuffer
+    };
+
+    std::vector<ShaderResource> shader_resources;
+    for(u32 i=0; i<sizeof(resources_list)/sizeof(resources_list[0]); ++i) {
+        auto* res = resources_list[i];
+        auto res_type = resource_types[i];
+
+        for(const auto& r : *res) {
+            // const auto& type = compiler.get_type(r.base_type_id); // for later use
+            const auto set = compiler.get_decoration(r.base_type_id, spv::Decoration::DecorationDescriptorSet);
+            const auto binding = compiler.get_decoration(r.base_type_id, spv::Decoration::DecorationBinding);
+            shader_resources.push_back(ShaderResource{
+                .descriptor_set = set,
+                .resource = {
+                    .name = r.name,
+                    .type = res_type,
+                    .binding = binding
+                }
+            });
+        }
+    }
+
+    std::sort(begin(shader_resources), end(shader_resources), [](auto&& a, auto&& b) {
+        if(a.descriptor_set < b.descriptor_set) { return true; }
+        if(a.resource.binding < b.resource.binding) { return true; }
+        return false;
+    });
+
+    return shader_resources;
+}
 
 Pipeline PipelineBuilder::build_graphics(std::string_view label) {
     std::vector<vk::PipelineShaderStageCreateInfo> stages;
