@@ -1,7 +1,10 @@
 #include "render_graph.hpp"
+#include "renderer_types.hpp"
 #include <spdlog/spdlog.h>
+#include <vulkan/vulkan_structs.hpp>
+#include <vulkan/vulkan_to_string.hpp>
 
-static vk::PipelineStageFlags2 RGStageToVk(RGSyncStage stage) {
+static vk::PipelineStageFlags2 to_vk_pipeline_stage(RGSyncStage stage) {
     switch (stage) {
         using enum RGSyncStage;
         case None:          { return vk::PipelineStageFlagBits2::eNone; }
@@ -11,29 +14,118 @@ static vk::PipelineStageFlags2 RGStageToVk(RGSyncStage stage) {
         case LateFragment:  { return vk::PipelineStageFlagBits2::eLateFragmentTests; }
         case Compute:       { return vk::PipelineStageFlagBits2::eComputeShader; }
         default: {
-            spdlog::error("RGStageToVk failed at stage: {}. Substituting with all commands stage mask", (u32)stage);
-            return vk::PipelineStageFlagBits2::eAllCommands;
+            spdlog::error("Unrecognized RGSyncStage {}", (u32)stage);
+            std::abort();
         }
     }
 }
 
-enum class RGAccessType { None, Read, Write };
-enum class RGImageAspect { None, Color, Depth };
+RenderGraph::BarrierStages RenderGraph::deduce_stages_and_accesses(const RenderPass* src_pass, const RenderPass* dst_pass, RPResource& src_resource, RPResource& dst_resource, bool src_read, bool dst_read) {
+    if(src_read && dst_read) {
+        spdlog::info("Detected trying to insert barrier with read-after-read - this is not neccessary.");
+        return BarrierStages{
+            .src_stage = vk::PipelineStageFlagBits2::eNone,
+            .dst_stage = vk::PipelineStageFlagBits2::eNone,
+            .src_access = vk::AccessFlagBits2::eNone,
+            .dst_access = vk::AccessFlagBits2::eNone,
+        };
+    }
 
-static vk::AccessFlags2 RGStageDeduceAccess(RGSyncStage stage, RGAccessType access, RGImageAspect aspect) {
-    //color, shader, transfer, depthstencil
-    vk::AccessFlagBits2 read_access, write_access;
+    const auto get_access = [&](RGSyncStage stage, RPResource& resource, bool read) {
+        switch (stage) {
+            case RGSyncStage::Transfer: {
+                if(read) { return vk::AccessFlagBits2::eTransferRead; }
+                else     { return vk::AccessFlagBits2::eTransferWrite; }
+            }
+            case RGSyncStage::EarlyFragment:
+            case RGSyncStage::LateFragment: {
+                if(read) { return vk::AccessFlagBits2::eDepthStencilAttachmentRead; }
+                else     { return vk::AccessFlagBits2::eDepthStencilAttachmentWrite; }
+            }
+            case RGSyncStage::Compute:
+            case RGSyncStage::Fragment: {
+                if(resource.usage == RGResourceUsage::Image) {
+                    auto& rg_resource = resources.at(resource.resource);
+                    const DescriptorBinding* binding = nullptr;
+                    if(src_pass && src_pass->pipeline) {
+                        binding = src_pass->pipeline->layout.find_binding(rg_resource.name);
+                    }
+                    if(!binding && dst_pass && dst_pass->pipeline) {
+                        binding = dst_pass->pipeline->layout.find_binding(rg_resource.name);
+                    }
+                    if(!binding) {
+                        spdlog::error("Trying to synchronize image resource {} that is not found in both passes' layouts {} {}", rg_resource.name, src_pass->name, dst_pass->name);
+                        std::abort();
+                    }
 
-    switch (stage) {
-        case RGSyncStage::Transfer: {
-            read_access = vk::AccessFlagBits2::eTransferRead;
-            write_access = vk::AccessFlagBits2::eTransferWrite;
-        } break;
-        case RGSyncStage::Fragment:
-        case RGSyncStage::Compute: {
-            read_access = vk::AccessFlagBits2::eShaderRead;
-            write_access = vk::AccessFlagBits2::eShaderWrite;
-        } break;
+                    if(binding->type == DescriptorType::StorageImage) {
+                        if(read)    { return vk::AccessFlagBits2::eShaderStorageRead; }
+                        else        { return vk::AccessFlagBits2::eShaderStorageWrite; }
+                    } else if(binding->type == DescriptorType::SampledImage) {
+                        if(read)    { return vk::AccessFlagBits2::eShaderSampledRead; }
+                        else {
+                            spdlog::error("You cannot write to a sampled image.");
+                            std::abort();
+                        }
+                    } else {
+                        spdlog::error("Unrecognized binding type {} for Image resource {} in stages {} {}", (u32)binding->type, rg_resource.name, src_pass->name, dst_pass->name);
+                        std::abort();
+                    }
+                } else {
+                    spdlog::error("Compute/Fragment stage NonImage barrier access deduction not implemented");
+                    std::abort();
+                }
+            }
+            default: {
+                spdlog::error("Unrecognized RGSyncStage {}", (u32)stage);
+                std::abort();
+            }
+        }
+    };
+
+    return BarrierStages{
+        .src_stage = src_pass ? to_vk_pipeline_stage(src_resource.stage) : vk::PipelineStageFlagBits2::eNone,
+        .dst_stage = to_vk_pipeline_stage(dst_resource.stage),
+        .src_access = src_pass ? get_access(src_resource.stage, src_resource, src_read) : vk::AccessFlagBits2::eNone,
+        .dst_access = dst_pass ? get_access(dst_resource.stage, dst_resource, dst_read) : vk::AccessFlagBits2::eNone,
+    };
+}
+
+vk::ImageAspectFlags to_vk_aspect(RGImageAspect aspect) {
+    switch (aspect) {
+        case RGImageAspect::Color: {
+            return vk::ImageAspectFlagBits::eColor;
+        }
+        case RGImageAspect::Depth: {
+            return vk::ImageAspectFlagBits::eDepth;
+        }
+        default: {
+            spdlog::error("Unrecognized RgImageAspect: {}", (u32)aspect);
+            std::abort();
+        }
+    }
+}
+
+vk::ImageSubresourceRange to_vk_subresource_range(TextureRange range, RGImageAspect aspect) {
+    return vk::ImageSubresourceRange{
+        to_vk_aspect(aspect),
+        range.base_mip, range.mips,
+        range.base_layer, range.layers
+    };
+}
+
+vk::ImageLayout to_vk_layout(RGImageLayout layout) {
+    switch(layout) {
+        case RGImageLayout::Attachment: { return vk::ImageLayout::eAttachmentOptimal; }
+        case RGImageLayout::General: { return vk::ImageLayout::eGeneral; }
+        case RGImageLayout::ReadOnly: { return vk::ImageLayout::eShaderReadOnlyOptimal; }
+        case RGImageLayout::TransferSrc: { return vk::ImageLayout::eTransferSrcOptimal; }
+        case RGImageLayout::TransferDst: { return vk::ImageLayout::eTransferDstOptimal; }
+        case RGImageLayout::Undefined: { return vk::ImageLayout::eUndefined; }
+        default: {
+            spdlog::error("Unrecognized RGImageLayout: {}", (u32)layout);
+            std::abort();
+        }
     }
 }
 
@@ -46,58 +138,106 @@ void RenderGraph::bake_graph() {
     std::vector<std::vector<ResourceIndex>> stages;
     std::unordered_map<RgResourceHandle, RenderPass*> last_modified, last_read;
     std::unordered_map<RenderPass*, uint32_t> pass_stage;
-    std::unordered_map<RenderPass*, PassDependencies> deps;
+    std::unordered_map<RenderPass*, PassDependencies> pass_dependencies;
 
     const auto get_stage = [&](u64 idx) -> auto& { 
         stages.resize(std::max(stages.size(), idx+1));
         return stages.at(idx);
     };
-    const auto get_pass_written_resource = [&](RgResourceHandle idx, RenderPass* pass) -> auto& {
-        return *std::find_if(begin(pass->write_resources), end(pass->write_resources), [idx](auto&& e) { return e.resource == idx; });
+    const auto find_in_written_resources = [&](RgResourceHandle idx, RenderPass* pass) -> auto* {
+        auto it = std::find_if(begin(pass->write_resources), end(pass->write_resources), [idx](auto&& e) { return e.resource == idx; });
+        return it != end(pass->write_resources) ? &*it : nullptr;
+    };
+    const auto find_in_read_resources = [&](RgResourceHandle idx, RenderPass* pass) -> auto* {
+        auto it = std::find_if(begin(pass->read_resources), end(pass->read_resources), [idx](auto&& e) { return e.resource == idx; });
+        return it != end(pass->read_resources) ? &*it : nullptr;
     };
     
     for(u32 pass_idx = 0; auto& pass : passes) {
         uint32_t stage = 0;
 
-        for(auto& read : pass.read_resources) {
-            auto& read_resource = resources.at(read.resource);
+        std::vector<RPResource>* pass_rw_resources[] {
+            &pass.read_resources,
+            &pass.write_resources
+        };
+        bool pass_rw_is_read[] { true, false };
 
-            if(auto written_resource_pass = last_modified.find(read.resource); written_resource_pass != last_modified.end()) {
-                auto written_resource_idx = written_resource_pass->first;
-                auto* writing_pass = written_resource_pass->second;
-                auto& written_resource = get_pass_written_resource(written_resource_idx, writing_pass);
+        for(auto i=0u; i<sizeof(pass_rw_resources) / sizeof(pass_rw_resources[0]); ++i) {
+            auto* pass_resources = pass_rw_resources[i];
+            auto is_being_read = pass_rw_is_read[i];
 
-                stage = std::max(stage, pass_stage.at(writing_pass) + 1);
+            for(auto& pass_resource : *pass_resources) {
+                auto& pass_rg_resource = resources.at(pass_resource.resource);
+                auto last_read_in = last_read.find(pass_resource.resource);
+                auto last_written_in = last_modified.find(pass_resource.resource);
+                const auto was_being_read = last_read_in != last_read.end();
+                const auto was_being_written = last_written_in != last_modified.end();
 
-                // deps[&pass].mem_barriers.push_back(vk::ImageMemoryBarrier2{
-                //     written_resource.stage,                     
-                //     RGStageToVk(written_resource.stage),
-                //     srcaccess,
-                //     dststage,
-                //     dstaccess,
-                //     oldlayout,
-                //     newlayout,
-                //     srq,
-                //     dstq,
-                //     img,
-                //     range
-                // })
+                stage = std::max({
+                    stage, 
+                                    // 1u to move to the next stage, so the appropriate barrier can be inserted before this read/write.
+                    was_being_read    ? 1u + pass_stage.at(last_read_in->second) : stage,
+                    was_being_written ? 1u + pass_stage.at(last_written_in->second) : stage
+                });
+
+                bool no_layout_transition = true;
+                BarrierStages deduced_stages;
+                RGImageLayout src_layout{RGImageLayout::Undefined}, dst_layout = pass_resource.texture_info.required_layout;
+                RPResource* read_resource{nullptr};
+                RPResource* written_resource{nullptr};
+                if(was_being_read)      { read_resource = find_in_read_resources(last_read_in->first, last_read_in->second); }
+                if(was_being_written)   { written_resource = find_in_written_resources(last_written_in->first, last_written_in->second); }
+                if(!was_being_read && !was_being_written && pass_rg_resource.texture->current_layout != to_vk_layout(pass_resource.texture_info.required_layout)) {
+                    deduced_stages = deduce_stages_and_accesses(nullptr, &pass, pass_resource, pass_resource, false, is_being_read);    
+                    no_layout_transition = false;
+                }
+                
+                if(was_being_written && is_being_read) { // read-after-write
+                    deduced_stages = deduce_stages_and_accesses(last_written_in->second, &pass, *written_resource, pass_resource, false, true);
+                    src_layout = written_resource->texture_info.required_layout;
+                } else if(was_being_written && !is_being_read) { // write-after-write
+                    deduced_stages = deduce_stages_and_accesses(last_written_in->second, &pass, *written_resource, pass_resource, false, false);
+                    src_layout = written_resource->texture_info.required_layout;
+                } else if(was_being_read && !is_being_read) { // write-after-write
+                    deduced_stages = deduce_stages_and_accesses(last_written_in->second, &pass, *read_resource, pass_resource, true, false);
+                    src_layout = read_resource->texture_info.required_layout;
+                } else if(no_layout_transition) {
+                    // read-after-read and no layout transition needed, or no initial layout transition needed
+                    continue;
+                }
+
+                spdlog::debug("Resource {} is getting a barrier between passes {} -> {} in stage {}. Barrier: [{} {}] [{} {}] layout {} -> {}", 
+                    pass_rg_resource.name,
+                    was_being_read ? last_read_in->second->name : was_being_written ? last_written_in->second->name : "None",
+                    pass.name, 
+                    stage,
+                    vk::to_string(deduced_stages.src_stage),
+                    vk::to_string(deduced_stages.src_access),
+                    vk::to_string(deduced_stages.dst_stage),
+                    vk::to_string(deduced_stages.dst_access),
+                    vk::to_string(to_vk_layout(src_layout)),
+                    vk::to_string(to_vk_layout(dst_layout)));
+                
+                pass_dependencies[&pass].mem_barriers.push_back(vk::ImageMemoryBarrier2{
+                    deduced_stages.src_stage,
+                    deduced_stages.src_access,
+                    deduced_stages.dst_stage,
+                    deduced_stages.dst_access,
+                    to_vk_layout(src_layout),
+                    to_vk_layout(dst_layout),
+                    vk::QueueFamilyIgnored,
+                    vk::QueueFamilyIgnored,
+                    pass_rg_resource.texture->image,
+                    to_vk_subresource_range(pass_resource.texture_info.range, pass_resource.usage == RGResourceUsage::DepthAttachment ? RGImageAspect::Depth : RGImageAspect::Color)
+                });
             }
         }
 
-        // for(auto &r : pass.write_resources) {
-        //     auto &res = resources.at(r.first);
-        //     if(last_read.contains(r.first)) {
-        //         stage = std::max(stage, pass_stage.at(last_read.at(r.first)) + 1);
-        //         INSERT BARRIERS HERE
-        //     }
-        // }
-
-        // for(auto &r : pass.read_resources) { last_read[r.first] = &pass; }
-        // for(auto &r : pass.write_resources) { last_modified[r.first] = &pass; }
-        // pass_stage[&pass] = stage;
-        // get_stage(stage).push_back(pass_idx);
-        // ++pass_idx;
+        for(auto &r : pass.read_resources) { last_read[r.resource] = &pass; }
+        for(auto &r : pass.write_resources) { last_modified[r.resource] = &pass; }
+        pass_stage[&pass] = stage;
+        get_stage(stage).push_back(pass_idx);
+        ++pass_idx;
     }
 
     std::vector<RenderPass> flat_resources;

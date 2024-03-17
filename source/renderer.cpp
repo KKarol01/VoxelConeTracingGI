@@ -245,50 +245,6 @@ void Renderer::setup_scene() {
 
 void Renderer::draw() {
     while(!glfwWindowShouldClose(window)) {
-        if(recompile_pipelines) {
-            char* read_shaders[] {
-                read_shader_file("default_lit.vert"),
-                read_shader_file("default_lit.frag"),
-            };
-            std::vector<u32> irs[] {
-                compile_shader("default_lit.vert", read_shaders[0]),
-                compile_shader("default_lit.frag", read_shaders[1]),
-            };
-            vk::ShaderModule modules[] {
-                device.createShaderModule(vk::ShaderModuleCreateInfo{{}, irs[0].size() * sizeof(u32), irs[0].data()}),
-                device.createShaderModule(vk::ShaderModuleCreateInfo{{}, irs[1].size() * sizeof(u32), irs[1].data()}),
-            };
-            free(read_shaders[0]);
-            free(read_shaders[1]);
-
-            device.destroyPipeline(pp_default_lit.pipeline);
-            device.destroyPipelineLayout(pp_default_lit.layout);
-            PipelineBuilder default_lit_builder{this};
-            pp_default_lit = default_lit_builder
-                .with_vertex_input(
-                    {
-                        vk::VertexInputBindingDescription{0, sizeof(Vertex), vk::VertexInputRate::eVertex}
-                    },
-                    {
-                        vk::VertexInputAttributeDescription{0, 0, vk::Format::eR32G32B32Sfloat, 0},
-                        vk::VertexInputAttributeDescription{1, 0, vk::Format::eR32G32B32Sfloat, 12},
-                        vk::VertexInputAttributeDescription{2, 0, vk::Format::eR32G32B32Sfloat, 24},
-                    })
-                .with_depth_testing(true, true, vk::CompareOp::eLess)
-                .with_culling(vk::CullModeFlagBits::eBack, vk::FrontFace::eCounterClockwise)
-                .with_shaders({
-                    {vk::ShaderStageFlagBits::eVertex, modules[0]},
-                    {vk::ShaderStageFlagBits::eFragment, modules[1]},
-                })
-                .with_color_attachments({swapchain_format})
-                .with_depth_attachment(vk::Format::eD32Sfloat)
-                .with_layout(global_set_layout)
-                .with_layout(default_lit_set_layout)
-                .with_layout(material_set_layout)
-                .build_graphics("default_lit_pipeline");   
-            recompile_pipelines = false;
-        }
-        
         camera.update();
         get_context().input->update();
         glfwPollEvents();
@@ -311,8 +267,8 @@ void Renderer::draw() {
         cmd.bindIndexBuffer(scene.index_buffer->buffer, 0, vk::IndexType::eUint32);
 
         cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, pp_voxelize.pipeline);
-        cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, pp_default_lit.layout, 0, global_set.set, {});
-        cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, pp_voxelize.layout, 1, voxelize_set.set, {});
+        cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, pp_default_lit.layout.layout, 0, global_set.set, {});
+        cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, pp_voxelize.layout.layout, 1, voxelize_set.set, {});
 
         cmd.writeTimestamp(vk::PipelineStageFlagBits::eTopOfPipe, query_pool, 0);
         cmd.clearColorImage(voxel_albedo.storage->image, vk::ImageLayout::eGeneral, vk::ClearColorValue{0.0f, 0.0f, 0.0f, 0.0f}, vk::ImageSubresourceRange{vk::ImageAspectFlagBits::eColor, 0, voxel_albedo.storage->mips, 0, 1});
@@ -383,8 +339,8 @@ void Renderer::draw() {
                 {}, {}, voxel_normal.storage->image, {vk::ImageAspectFlagBits::eColor, 0, voxel_normal.storage->mips, 0, 1}});
  
         cmd.bindPipeline(vk::PipelineBindPoint::eCompute, pp_merge_voxels.pipeline);
-        cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, pp_merge_voxels.layout, 0, global_set.set, {});
-        cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, pp_merge_voxels.layout, 1, merge_voxels_set.set, {});
+        cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, pp_merge_voxels.layout.layout, 0, global_set.set, {});
+        cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, pp_merge_voxels.layout.layout, 1, merge_voxels_set.set, {});
         cmd.dispatch(256/8, 256/8, 256/8);
 
         cmd.writeTimestamp(vk::PipelineStageFlagBits::eComputeShader, query_pool, 2);
@@ -487,8 +443,8 @@ void Renderer::draw() {
         };
 
         cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, pp_default_lit.pipeline);
-        cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, pp_default_lit.layout, 1, default_lit_set.set, {});
-        cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, pp_default_lit.layout, 2, material_set.set, {});
+        cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, pp_default_lit.layout.layout, 1, default_lit_set.set, {});
+        cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, pp_default_lit.layout.layout, 2, material_set.set, {});
         cmd.beginRendering(vk::RenderingInfo{
             {},
             {{}, {1024, 768}},
@@ -892,14 +848,14 @@ bool Renderer::initialize_render_passes() {
         .with_depth_testing(true, true, vk::CompareOp::eLess)
         .with_culling(vk::CullModeFlagBits::eBack, vk::FrontFace::eCounterClockwise)
         .with_shaders({
-            {vk::ShaderStageFlagBits::eVertex, modules.at(0)},
-            {vk::ShaderStageFlagBits::eFragment, modules.at(1)},
+            {vk::ShaderStageFlagBits::eVertex, &shaders.at(0)},
+            {vk::ShaderStageFlagBits::eFragment, &shaders.at(1)},
         })
         .with_color_attachments({swapchain_format})
         .with_depth_attachment(vk::Format::eD32Sfloat)
-        .with_layout(global_set_layout)
-        .with_layout(default_lit_set_layout)
-        .with_layout(material_set_layout)
+        // .with_layout(global_set_layout)
+        // .with_layout(default_lit_set_layout)
+        // .with_layout(material_set_layout)
         .build_graphics("default_lit_pipeline");
 
     PipelineBuilder voxelize_builder{this};
@@ -916,21 +872,21 @@ bool Renderer::initialize_render_passes() {
         .with_depth_testing(false, false, vk::CompareOp::eAlways)
         .with_culling(vk::CullModeFlagBits::eNone, vk::FrontFace::eCounterClockwise)
         .with_shaders({
-            {vk::ShaderStageFlagBits::eVertex, modules.at(2)},
-            {vk::ShaderStageFlagBits::eGeometry, modules.at(3)},
-            {vk::ShaderStageFlagBits::eFragment, modules.at(4)},
+            {vk::ShaderStageFlagBits::eVertex, &shaders.at(2)},
+            {vk::ShaderStageFlagBits::eGeometry, &shaders.at(3)},
+            {vk::ShaderStageFlagBits::eFragment, &shaders.at(4)},
         })
-        .with_layout(global_set_layout)
-        .with_layout(voxelize_set_layout)
+        // .with_layout(global_set_layout)
+        // .with_layout(voxelize_set_layout)
         .build_graphics("voxelize_pipeline");
 
     PipelineBuilder merge_voxels_builder{this};
     pp_merge_voxels = merge_voxels_builder
         .with_shaders({
-            {vk::ShaderStageFlagBits::eCompute, modules.at(5)},
+            {vk::ShaderStageFlagBits::eCompute, &shaders.at(5)},
         })
-        .with_layout(global_set_layout)
-        .with_layout(merge_voxels_set_layout)
+        // .with_layout(global_set_layout)
+        // .with_layout(merge_voxels_set_layout)
         .build_compute("merge_voxels_pipeline");
 
     glm::mat4 global_buffer_size[2];
@@ -1020,18 +976,19 @@ bool Renderer::initialize_render_passes() {
     RenderPass pass_voxelization;
     pass_voxelization
         .set_name("voxelization")
+        .set_pipeline(&pp_voxelize)
         .set_rendering_extent(RenderPassRenderingExtent{
             .viewport = {0.0f, 0.0f, 256.0f, 256.0f, 0.0f, 1.0f},
             .scissor = {0, 0, 256, 256}
         })
-        .write_to_color_image(RPResource{
+        .write_to_image(RPResource{
             res_voxel_albedo,
             RGSyncStage::Fragment,
             TextureInfo{
                 .required_layout = RGImageLayout::General,
             }
         })
-        .write_to_color_image(RPResource{
+        .write_to_image(RPResource{
             res_voxel_normal,
             RGSyncStage::Fragment,
             TextureInfo{
@@ -1043,25 +1000,26 @@ bool Renderer::initialize_render_passes() {
     RenderPass pass_radiance_inject;
     pass_radiance_inject
         .set_name("radiance_inject")
+        .set_pipeline(&pp_merge_voxels)
         .set_rendering_extent(RenderPassRenderingExtent{
             .viewport = {0.0f, 0.0f, 256.0f, 256.0f, 0.0f, 1.0f},
             .scissor = {0, 0, 256, 256}
         })
-        .add_read_resource(RPResource{
+        .read_from_image(RPResource{
             res_voxel_albedo, 
             RGSyncStage::Compute,
             TextureInfo{
                 .required_layout = RGImageLayout::General
             }
         })
-        .add_read_resource(RPResource{
+        .read_from_image(RPResource{
             res_voxel_normal, 
             RGSyncStage::Compute,
             TextureInfo{
                 .required_layout = RGImageLayout::General
             }
         })
-        .write_to_color_image(RPResource{
+        .write_to_image(RPResource{
             res_voxel_radiance, 
             RGSyncStage::Compute,
             TextureInfo{
@@ -1074,7 +1032,7 @@ bool Renderer::initialize_render_passes() {
         RenderPass mip_pass;
         mip_pass
             .set_name(std::format("radiance_mip_{}", i))
-            .add_read_resource(RPResource{
+            .read_from_image(RPResource{
                 res_voxel_radiance, 
                 RGSyncStage::Transfer,
                 TextureInfo{
@@ -1082,7 +1040,7 @@ bool Renderer::initialize_render_passes() {
                     .range = {i-1, 1, 0, 1}
                 }
             })
-            .write_to_color_image(RPResource{
+            .write_to_image(RPResource{
                 res_voxel_radiance, 
                 RGSyncStage::Transfer,
                 TextureInfo{
@@ -1096,11 +1054,12 @@ bool Renderer::initialize_render_passes() {
     RenderPass pass_default_lit;
     pass_default_lit
         .set_name("default_lit")
+        .set_pipeline(&pp_default_lit)
         .set_rendering_extent(RenderPassRenderingExtent{
             .viewport = {0.0f, 0.0f, 1920.0f, 1080.0f, 0.0f, 1.0f},
             .scissor = {0, 0, 1920, 1080}
         })
-        .add_read_resource(RPResource{
+        .read_from_image(RPResource{
             res_voxel_radiance, 
             RGSyncStage::Fragment,
             TextureInfo{

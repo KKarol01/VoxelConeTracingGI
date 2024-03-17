@@ -38,7 +38,7 @@ std::vector<ShaderResource> get_shader_resources(const std::vector<u32>& ir) {
     const auto& resources = compiler.get_shader_resources();
 
     const spirv_cross::SmallVector<spirv_cross::Resource>* resources_list[] {
-        &resources.sampled_images,
+        &resources.separate_images,
         &resources.storage_images,
         &resources.separate_samplers,
         &resources.uniform_buffers,
@@ -59,8 +59,8 @@ std::vector<ShaderResource> get_shader_resources(const std::vector<u32>& ir) {
 
         for(const auto& r : *res) {
             // const auto& type = compiler.get_type(r.base_type_id); // for later use
-            const auto set = compiler.get_decoration(r.base_type_id, spv::Decoration::DecorationDescriptorSet);
-            const auto binding = compiler.get_decoration(r.base_type_id, spv::Decoration::DecorationBinding);
+            const auto set = compiler.get_decoration(r.id, spv::Decoration::DecorationDescriptorSet);
+            const auto binding = compiler.get_decoration(r.id, spv::Decoration::DecorationBinding);
             shader_resources.push_back(ShaderResource{
                 .descriptor_set = set,
                 .resource = {
@@ -73,9 +73,8 @@ std::vector<ShaderResource> get_shader_resources(const std::vector<u32>& ir) {
     }
 
     std::sort(begin(shader_resources), end(shader_resources), [](auto&& a, auto&& b) {
-        if(a.descriptor_set < b.descriptor_set) { return true; }
-        if(a.resource.binding < b.resource.binding) { return true; }
-        return false;
+        if(a.descriptor_set != b.descriptor_set) { return a.descriptor_set < b.descriptor_set; }
+        return a.resource.binding < b.resource.binding;
     });
 
     return shader_resources;
@@ -242,14 +241,16 @@ PipelineLayout PipelineBuilder::coalesce_shader_resources_into_layout() {
     static constexpr vk::ShaderStageFlags ALL_STAGE_FLAGS = 
         vk::ShaderStageFlagBits::eFragment | 
         vk::ShaderStageFlagBits::eVertex |
-        vk::ShaderStageFlagBits::eCompute;
+        vk::ShaderStageFlagBits::eCompute | 
+        vk::ShaderStageFlagBits::eGeometry;
 
-    const auto get_set_bindings = [&layout](u32 set) {
+    const auto get_set_bindings = [&layout](u32 set) -> auto& {
         return layout.descriptor_sets.at(set).bindings;
     };
 
-    const auto find_binding_in_set = [&](u32 set, u32 binding) {
-        return std::find_if(begin(get_set_bindings(set)), end(get_set_bindings(set)), [binding](auto&& a) {
+    const auto find_binding_in_set = [&](u32 set, u32 binding) -> auto {
+        auto& bindings = get_set_bindings(set);
+        return std::find_if(begin(bindings), end(bindings), [binding](auto&& a) {
             return a.binding == binding;
         });
     };

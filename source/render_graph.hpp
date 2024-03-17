@@ -6,12 +6,25 @@
 #include <iostream>
 #include <format>
 #include <functional>
-#include <vulkan/vulkan.hpp>
+#include <vulkan/vulkan_enums.hpp>
 
+struct Pipeline;
 struct TextureStorage;
 
 enum class RGResourceType {
     None, Buffer, Texture
+};
+
+enum class RGResourceUsage {
+    None, Image, ColorAttachment, DepthAttachment
+};
+
+enum class RGAccessType { 
+    None, Read, Write 
+};
+
+enum class RGImageAspect { 
+    None, Color, Depth 
 };
 
 using RgResourceHandle = uint64_t;
@@ -39,7 +52,7 @@ struct TextureInfo {
 
 struct RGResource {
     // RGResource(const std::string& name, Buffer* buffer): name(name), type(RGResourceType::Buffer) {}
-    RGResource(const std::string& name, TextureStorage* texture): name(name), type(RGResourceType::Texture) {}
+    RGResource(const std::string& name, TextureStorage* texture): name(name), type(RGResourceType::Texture), texture(texture) {}
     
     std::string name;
     RGResourceType type{RGResourceType::None};
@@ -57,6 +70,7 @@ struct RPResource {
     
     RgResourceHandle resource;
     RGSyncStage stage;
+    RGResourceUsage usage{RGResourceUsage::None};
     union {
         BufferInfo buffer_info;
         TextureInfo texture_info;
@@ -88,12 +102,14 @@ struct RenderPass {
         return *this;
     }
 
-    RenderPass& write_to_color_image(const RPResource& info) {
+    RenderPass& write_to_image(RPResource info) {
+        info.usage = RGResourceUsage::Image;
         write_resources.push_back(info);
         return *this;
     }
 
-    RenderPass& add_read_resource(const RPResource& info) {
+    RenderPass& read_from_image(RPResource info) {
+        info.usage = RGResourceUsage::Image;
         read_resources.push_back(info);
         return *this;
     }
@@ -102,8 +118,14 @@ struct RenderPass {
         this->extent = extent;
         return *this;
     }
+
+    RenderPass& set_pipeline(Pipeline* pipeline) {
+        this->pipeline = pipeline;
+        return *this;
+    }
     
     std::string name;
+    Pipeline* pipeline{};
     std::function<void()> func;
     RenderPassRenderingExtent extent;
     std::vector<RPResource> write_resources;
@@ -124,6 +146,13 @@ public:
 
     void bake_graph();
     
+private:
+    struct BarrierStages {
+        vk::PipelineStageFlags2 src_stage, dst_stage;
+        vk::AccessFlags2 src_access, dst_access;
+    };
+    BarrierStages deduce_stages_and_accesses(const RenderPass* src_pass, const RenderPass* dst_pass, RPResource& src_resource, RPResource& dst_resource, bool src_read, bool dst_read);
+
     std::vector<RGResource> resources;
     std::vector<vk::DependencyInfo> pass_deps;
     std::vector<RenderPass> passes;

@@ -34,6 +34,15 @@ struct Shader {
 struct PipelineLayout {
     static inline constexpr u32 MAX_DESCRIPTOR_SET_COUNT = 4u;
 
+    const DescriptorBinding* find_binding(std::string_view name) const {
+        for(auto& s : descriptor_sets) {
+            for(auto& b : s.bindings) {
+                if(b.name == name) { return &b; }
+            }
+        }
+        return nullptr;
+    }
+
     vk::PipelineLayout layout;
     std::array<DescriptorLayout, MAX_DESCRIPTOR_SET_COUNT> descriptor_sets;
 };

@@ -61,7 +61,9 @@ target_link_libraries(vxgi
         fastgltf
         stb
         imgui
-	$<$<CONFIG:Debug>: shaderc_sharedd>
-	$<$<CONFIG:Release>: shaderc_shared>
+        $<$<CONFIG:Debug>: shaderc_sharedd>
+        $<$<CONFIG:Release>: shaderc_shared>
+        $<$<CONFIG:Debug>: spirv-cross-cored>
+        $<$<CONFIG:Release>: spirv-cross-core>
         libomp
 )
