@@ -290,11 +290,8 @@ void RenderGraph::bake_graph() {
     }
     passes = std::move(flat_resources);
 
-    for(u32 offset = 0u, stage_num=0; auto c : stage_pass_count) {
-        for(auto i=offset; i<offset + c; ++i) {
-            spdlog::debug("In stage {} there are {} passes with {} barriers total", stage_num, c, stage_deps.at(stage_num).attachment_barriers.size() + stage_deps.at(stage_num).mem_barriers.size());
-        }
-        offset += c;
+    for(u32 stage_num=0; auto c : stage_pass_count) {
+        spdlog::debug("In stage {} there are {} passes with {} barriers total", stage_num, c, stage_deps.at(stage_num).attachment_barriers.size() + stage_deps.at(stage_num).mem_barriers.size());
         ++stage_num;
     }
 }
