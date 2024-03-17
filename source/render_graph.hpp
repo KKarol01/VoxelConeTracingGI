@@ -30,7 +30,8 @@ enum class RGImageAspect {
 using RgResourceHandle = uint64_t;
 
 enum class RGSyncStage {
-    None, Transfer, Fragment, EarlyFragment, LateFragment, Compute
+    None, Transfer, Fragment, EarlyFragment, LateFragment, Compute, 
+    ColorAttachmentOutput
 };
 
 struct BufferInfo {
@@ -114,6 +115,18 @@ struct RenderPass {
         return *this;
     }
 
+    RenderPass& read_color_attachment(RPResource info) {
+        info.usage = RGResourceUsage::ColorAttachment;
+        read_resources.push_back(info);
+        return *this;
+    }
+
+    RenderPass& write_color_attachment(RPResource info) {
+        info.usage = RGResourceUsage::ColorAttachment;
+        write_resources.push_back(info);
+        return *this;
+    }
+
     RenderPass& set_rendering_extent(const RenderPassRenderingExtent& extent) {
         this->extent = extent;
         return *this;
@@ -139,14 +152,22 @@ public:
         return resources.size() - 1;
     }
 
-    RenderGraph& add_render_pass(RenderPass&& pass) {
+    RenderGraph& add_render_pass(const RenderPass& pass) {
         passes.push_back(std::move(pass));
         return *this;
+    }
+
+    const RGResource& get_resource(RgResourceHandle resource) const {
+        return resources.at(resource);
     }
 
     void bake_graph();
     
 private:
+    struct PassDependencies {
+        std::vector<vk::ImageMemoryBarrier2> mem_barriers;
+        std::vector<vk::ImageMemoryBarrier2> attachment_barriers; // need special handling like vk::Image patching during rendering
+    };
     struct BarrierStages {
         vk::PipelineStageFlags2 src_stage, dst_stage;
         vk::AccessFlags2 src_access, dst_access;
@@ -154,6 +175,7 @@ private:
     BarrierStages deduce_stages_and_accesses(const RenderPass* src_pass, const RenderPass* dst_pass, RPResource& src_resource, RPResource& dst_resource, bool src_read, bool dst_read);
 
     std::vector<RGResource> resources;
-    std::vector<vk::DependencyInfo> pass_deps;
     std::vector<RenderPass> passes;
+    std::vector<PassDependencies> stage_deps;
+    std::vector<u32> stage_pass_count;
 };

@@ -13,6 +13,7 @@ static vk::PipelineStageFlags2 to_vk_pipeline_stage(RGSyncStage stage) {
         case EarlyFragment: { return vk::PipelineStageFlagBits2::eEarlyFragmentTests; }
         case LateFragment:  { return vk::PipelineStageFlagBits2::eLateFragmentTests; }
         case Compute:       { return vk::PipelineStageFlagBits2::eComputeShader; }
+        case ColorAttachmentOutput: { return vk::PipelineStageFlagBits2::eColorAttachmentOutput; }
         default: {
             spdlog::error("Unrecognized RGSyncStage {}", (u32)stage);
             std::abort();
@@ -131,18 +132,19 @@ vk::ImageLayout to_vk_layout(RGImageLayout layout) {
 
 void RenderGraph::bake_graph() {
     using ResourceIndex = u32;
-    struct PassDependencies {
-        std::vector<vk::ImageMemoryBarrier2> mem_barriers;
-    };
 
     std::vector<std::vector<ResourceIndex>> stages;
+    std::vector<PassDependencies> stage_dependencies;
     std::unordered_map<RgResourceHandle, RenderPass*> last_modified, last_read;
     std::unordered_map<RenderPass*, uint32_t> pass_stage;
-    std::unordered_map<RenderPass*, PassDependencies> pass_dependencies;
 
     const auto get_stage = [&](u64 idx) -> auto& { 
         stages.resize(std::max(stages.size(), idx+1));
         return stages.at(idx);
+    };
+    const auto get_stage_dependencies = [&](u64 idx) -> auto& {
+        stage_dependencies.resize(std::max(stage_dependencies.size(), idx+1));
+        return stage_dependencies.at(idx);
     };
     const auto find_in_written_resources = [&](RgResourceHandle idx, RenderPass* pass) -> auto* {
         auto it = std::find_if(begin(pass->write_resources), end(pass->write_resources), [idx](auto&& e) { return e.resource == idx; });
@@ -154,8 +156,7 @@ void RenderGraph::bake_graph() {
     };
     
     for(u32 pass_idx = 0; auto& pass : passes) {
-        uint32_t stage = 0;
-
+        u32 stage = 0u;
         std::vector<RPResource>* pass_rw_resources[] {
             &pass.read_resources,
             &pass.write_resources
@@ -167,6 +168,7 @@ void RenderGraph::bake_graph() {
             auto is_being_read = pass_rw_is_read[i];
 
             for(auto& pass_resource : *pass_resources) {
+                u32 barrier_stage = 0u;
                 auto& pass_rg_resource = resources.at(pass_resource.resource);
                 auto last_read_in = last_read.find(pass_resource.resource);
                 auto last_written_in = last_modified.find(pass_resource.resource);
@@ -179,6 +181,11 @@ void RenderGraph::bake_graph() {
                     was_being_read    ? 1u + pass_stage.at(last_read_in->second) : stage,
                     was_being_written ? 1u + pass_stage.at(last_written_in->second) : stage
                 });
+                barrier_stage = std::max({
+                    barrier_stage, 
+                    was_being_read    ? 1u + pass_stage.at(last_read_in->second) : barrier_stage,
+                    was_being_written ? 1u + pass_stage.at(last_written_in->second) : barrier_stage
+                });
 
                 bool no_layout_transition = true;
                 BarrierStages deduced_stages;
@@ -187,8 +194,25 @@ void RenderGraph::bake_graph() {
                 RPResource* written_resource{nullptr};
                 if(was_being_read)      { read_resource = find_in_read_resources(last_read_in->first, last_read_in->second); }
                 if(was_being_written)   { written_resource = find_in_written_resources(last_written_in->first, last_written_in->second); }
-                if(!was_being_read && !was_being_written && pass_rg_resource.texture->current_layout != to_vk_layout(pass_resource.texture_info.required_layout)) {
+                if(pass_resource.usage == RGResourceUsage::Image &&
+                   !was_being_read && 
+                   !was_being_written && 
+                   pass_rg_resource.texture->current_layout != to_vk_layout(pass_resource.texture_info.required_layout)) {
                     deduced_stages = deduce_stages_and_accesses(nullptr, &pass, pass_resource, pass_resource, false, is_being_read);    
+                    no_layout_transition = false;
+                } else if((pass_resource.usage == RGResourceUsage::ColorAttachment || 
+                           pass_resource.usage == RGResourceUsage::DepthAttachment) &&
+                    !was_being_read && 
+                    !was_being_written) {
+
+                    deduced_stages.src_stage = vk::PipelineStageFlagBits2::eNone;
+                    deduced_stages.src_access = vk::AccessFlagBits2::eNone;
+                    deduced_stages.dst_stage = to_vk_pipeline_stage(pass_resource.stage);
+                    if(pass_resource.usage == RGResourceUsage::ColorAttachment) {
+                        deduced_stages.dst_access = is_being_read ? vk::AccessFlagBits2::eColorAttachmentRead : vk::AccessFlagBits2::eColorAttachmentWrite;
+                    } else if(pass_resource.usage == RGResourceUsage::DepthAttachment) {
+                        deduced_stages.dst_access = is_being_read ? vk::AccessFlagBits2::eDepthStencilAttachmentRead : vk::AccessFlagBits2::eDepthStencilAttachmentWrite;
+                    }
                     no_layout_transition = false;
                 }
                 
@@ -210,7 +234,7 @@ void RenderGraph::bake_graph() {
                     pass_rg_resource.name,
                     was_being_read ? last_read_in->second->name : was_being_written ? last_written_in->second->name : "None",
                     pass.name, 
-                    stage,
+                    barrier_stage,
                     vk::to_string(deduced_stages.src_stage),
                     vk::to_string(deduced_stages.src_access),
                     vk::to_string(deduced_stages.dst_stage),
@@ -218,7 +242,20 @@ void RenderGraph::bake_graph() {
                     vk::to_string(to_vk_layout(src_layout)),
                     vk::to_string(to_vk_layout(dst_layout)));
                 
-                pass_dependencies[&pass].mem_barriers.push_back(vk::ImageMemoryBarrier2{
+                std::vector<vk::ImageMemoryBarrier2>* barrier_storage;
+                vk::Image resource_image{};
+                if(pass_resource.usage == RGResourceUsage::Image) {
+                    barrier_storage = &get_stage_dependencies(barrier_stage).mem_barriers;
+                    resource_image = pass_rg_resource.texture->image;
+                } else if(pass_resource.usage == RGResourceUsage::ColorAttachment ||
+                          pass_resource.usage == RGResourceUsage::DepthAttachment) {
+                    barrier_storage = &get_stage_dependencies(barrier_stage).attachment_barriers;
+                } else {
+                    spdlog::error("Unrecognized pass resource usage {}. Cannot select appropriate barrier storage.", (u32)pass_resource.usage);
+                    std::abort();
+                }
+                
+                barrier_storage->push_back(vk::ImageMemoryBarrier2{
                     deduced_stages.src_stage,
                     deduced_stages.src_access,
                     deduced_stages.dst_stage,
@@ -227,7 +264,7 @@ void RenderGraph::bake_graph() {
                     to_vk_layout(dst_layout),
                     vk::QueueFamilyIgnored,
                     vk::QueueFamilyIgnored,
-                    pass_rg_resource.texture->image,
+                    resource_image,
                     to_vk_subresource_range(pass_resource.texture_info.range, pass_resource.usage == RGResourceUsage::DepthAttachment ? RGImageAspect::Depth : RGImageAspect::Color)
                 });
             }
@@ -242,14 +279,22 @@ void RenderGraph::bake_graph() {
 
     std::vector<RenderPass> flat_resources;
     flat_resources.reserve(passes.size());
-    for(auto &s : stages) {
+    stage_deps = std::move(stage_dependencies);
+    stage_pass_count.resize(stages.size());
+    for(u32 stage_idx = 0; auto &s : stages) {
         for(auto &r : s) {
             flat_resources.push_back(std::move(passes.at(r)));
         }
+        stage_pass_count.at(stage_idx) = s.size();
+        ++stage_idx;
     }
     passes = std::move(flat_resources);
 
-    for(auto &p : passes) {
-        std::cout << std::format("{} ", p.name);
+    for(u32 offset = 0u, stage_num=0; auto c : stage_pass_count) {
+        for(auto i=offset; i<offset + c; ++i) {
+            spdlog::debug("In stage {} there are {} passes with {} barriers total", stage_num, c, stage_deps.at(stage_num).attachment_barriers.size() + stage_deps.at(stage_num).mem_barriers.size());
+        }
+        offset += c;
+        ++stage_num;
     }
 }

@@ -853,9 +853,6 @@ bool Renderer::initialize_render_passes() {
         })
         .with_color_attachments({swapchain_format})
         .with_depth_attachment(vk::Format::eD32Sfloat)
-        // .with_layout(global_set_layout)
-        // .with_layout(default_lit_set_layout)
-        // .with_layout(material_set_layout)
         .build_graphics("default_lit_pipeline");
 
     PipelineBuilder voxelize_builder{this};
@@ -876,8 +873,6 @@ bool Renderer::initialize_render_passes() {
             {vk::ShaderStageFlagBits::eGeometry, &shaders.at(3)},
             {vk::ShaderStageFlagBits::eFragment, &shaders.at(4)},
         })
-        // .with_layout(global_set_layout)
-        // .with_layout(voxelize_set_layout)
         .build_graphics("voxelize_pipeline");
 
     PipelineBuilder merge_voxels_builder{this};
@@ -885,8 +880,6 @@ bool Renderer::initialize_render_passes() {
         .with_shaders({
             {vk::ShaderStageFlagBits::eCompute, &shaders.at(5)},
         })
-        // .with_layout(global_set_layout)
-        // .with_layout(merge_voxels_set_layout)
         .build_compute("merge_voxels_pipeline");
 
     glm::mat4 global_buffer_size[2];
@@ -972,6 +965,26 @@ bool Renderer::initialize_render_passes() {
     const auto res_voxel_albedo = render_graph->add_resource(RGResource{"voxel_albedo", voxel_albedo.storage});
     const auto res_voxel_normal = render_graph->add_resource(RGResource{"voxel_normal", voxel_normal.storage});
     const auto res_voxel_radiance = render_graph->add_resource(RGResource{"voxel_radiance", voxel_radiance.storage});
+    const auto res_color_attachment = render_graph->add_resource(RGResource{"color_attachment", nullptr});
+
+    const auto create_clear_pass = [&](RgResourceHandle resource) {
+        RenderPass pass_clear;
+        pass_clear
+            .set_name(std::format("clear_{}", render_graph->get_resource(resource).name))
+            .write_to_image(RPResource{
+                resource,
+                RGSyncStage::Transfer,
+                TextureInfo{
+                    .required_layout = RGImageLayout::TransferDst,
+                    .range = {0, vk::RemainingMipLevels, 0, vk::RemainingArrayLayers}
+                }
+            });
+        return pass_clear;
+    };
+
+    render_graph->add_render_pass(create_clear_pass(res_voxel_albedo));
+    render_graph->add_render_pass(create_clear_pass(res_voxel_normal));
+    render_graph->add_render_pass(create_clear_pass(res_voxel_radiance));
 
     RenderPass pass_voxelization;
     pass_voxelization
@@ -995,7 +1008,7 @@ bool Renderer::initialize_render_passes() {
                 .required_layout = RGImageLayout::General,
             }
         });
-    render_graph->add_render_pass(std::move(pass_voxelization));
+    render_graph->add_render_pass(pass_voxelization);
 
     RenderPass pass_radiance_inject;
     pass_radiance_inject
@@ -1026,7 +1039,7 @@ bool Renderer::initialize_render_passes() {
                 .required_layout = RGImageLayout::General,
             }
         });
-    render_graph->add_render_pass(std::move(pass_radiance_inject));
+    render_graph->add_render_pass(pass_radiance_inject);
 
     for(u32 i=1; i<voxel_radiance.storage->mips; ++i) {
         RenderPass mip_pass;
@@ -1048,7 +1061,7 @@ bool Renderer::initialize_render_passes() {
                     .range = {i, 1, 0, 1}
                 }
             });
-        render_graph->add_render_pass(std::move(mip_pass));
+        render_graph->add_render_pass(mip_pass);
     }
         
     RenderPass pass_default_lit;
@@ -1066,8 +1079,15 @@ bool Renderer::initialize_render_passes() {
                 .required_layout = RGImageLayout::General,
                 .range = {0, voxel_radiance.storage->mips, 0, 1}
             }
+        })
+        .write_color_attachment(RPResource{
+            res_color_attachment,
+            RGSyncStage::ColorAttachmentOutput,
+            TextureInfo{
+                .required_layout = RGImageLayout::Attachment
+            }
         });
-    render_graph->add_render_pass(std::move(pass_default_lit));
+    render_graph->add_render_pass(pass_default_lit);
 
     render_graph->bake_graph();
 
