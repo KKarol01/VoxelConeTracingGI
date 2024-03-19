@@ -47,9 +47,12 @@ struct PipelineLayout {
     std::array<DescriptorLayout, MAX_DESCRIPTOR_SET_COUNT> descriptor_sets;
 };
 
+enum class PipelineType { None, Graphics, Compute };
+
 struct Pipeline {
     vk::Pipeline pipeline;
     PipelineLayout layout;
+    PipelineType type{PipelineType::None};
 };
 
 struct GpuBuffer {

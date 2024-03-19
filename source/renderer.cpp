@@ -263,225 +263,227 @@ void Renderer::draw() {
         
         cmd.begin({vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
         cmd.resetQueryPool(query_pool, 0, 7);
-        cmd.bindVertexBuffers(0, scene.vertex_buffer->buffer, 0ull);
-        cmd.bindIndexBuffer(scene.index_buffer->buffer, 0, vk::IndexType::eUint32);
+        // cmd.bindVertexBuffers(0, scene.vertex_buffer->buffer, 0ull);
+        // cmd.bindIndexBuffer(scene.index_buffer->buffer, 0, vk::IndexType::eUint32);
 
-        cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, pp_voxelize.pipeline);
-        cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, pp_default_lit.layout.layout, 0, global_set.set, {});
-        cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, pp_voxelize.layout.layout, 1, voxelize_set.set, {});
+        // cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, pp_voxelize.pipeline);
+        // cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, pp_default_lit.layout.layout, 0, global_set.set, {});
+        // cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, pp_voxelize.layout.layout, 1, voxelize_set.set, {});
 
-        cmd.writeTimestamp(vk::PipelineStageFlagBits::eTopOfPipe, query_pool, 0);
-        cmd.clearColorImage(voxel_albedo.storage->image, vk::ImageLayout::eGeneral, vk::ClearColorValue{0.0f, 0.0f, 0.0f, 0.0f}, vk::ImageSubresourceRange{vk::ImageAspectFlagBits::eColor, 0, voxel_albedo.storage->mips, 0, 1});
-        cmd.clearColorImage(voxel_normal.storage->image, vk::ImageLayout::eGeneral, vk::ClearColorValue{0.0f, 0.0f, 0.0f, 0.0f}, vk::ImageSubresourceRange{vk::ImageAspectFlagBits::eColor, 0, voxel_normal.storage->mips, 0, 1});
-        cmd.clearColorImage(voxel_radiance.storage->image, vk::ImageLayout::eGeneral, vk::ClearColorValue{0.0f, 0.0f, 0.0f, 0.0f}, vk::ImageSubresourceRange{vk::ImageAspectFlagBits::eColor, 0, voxel_radiance.storage->mips, 0, 1});
-        cmd.pipelineBarrier(
-            vk::PipelineStageFlagBits::eTransfer,
-            vk::PipelineStageFlagBits::eFragmentShader,
-            {}, {}, {},
-            vk::ImageMemoryBarrier{
-                vk::AccessFlagBits::eTransferWrite,
-                vk::AccessFlagBits::eShaderWrite | vk::AccessFlagBits::eShaderRead,
-                vk::ImageLayout::eGeneral, vk::ImageLayout::eGeneral,
-                {}, {}, voxel_albedo.storage->image, {vk::ImageAspectFlagBits::eColor, 0, voxel_albedo.storage->mips, 0, 1}});
-        cmd.pipelineBarrier(
-            vk::PipelineStageFlagBits::eTransfer,
-            vk::PipelineStageFlagBits::eFragmentShader,
-            {}, {}, {},
-            vk::ImageMemoryBarrier{
-                vk::AccessFlagBits::eTransferWrite,
-                vk::AccessFlagBits::eShaderWrite | vk::AccessFlagBits::eShaderRead,
-                vk::ImageLayout::eGeneral, vk::ImageLayout::eGeneral,
-                {}, {}, voxel_normal.storage->image, {vk::ImageAspectFlagBits::eColor, 0, voxel_normal.storage->mips, 0, 1}});
-        cmd.pipelineBarrier(
-            vk::PipelineStageFlagBits::eTransfer,
-            vk::PipelineStageFlagBits::eComputeShader,
-            {}, {}, {},
-            vk::ImageMemoryBarrier{
-                vk::AccessFlagBits::eTransferWrite,
-                vk::AccessFlagBits::eShaderWrite | vk::AccessFlagBits::eShaderRead,
-                vk::ImageLayout::eGeneral, vk::ImageLayout::eGeneral,
-                {}, {}, voxel_radiance.storage->image, {vk::ImageAspectFlagBits::eColor, 0, voxel_radiance.storage->mips, 0, 1}});
+        // cmd.writeTimestamp(vk::PipelineStageFlagBits::eTopOfPipe, query_pool, 0);
+        // cmd.clearColorImage(voxel_albedo.storage->image, vk::ImageLayout::eGeneral, vk::ClearColorValue{0.0f, 0.0f, 0.0f, 0.0f}, vk::ImageSubresourceRange{vk::ImageAspectFlagBits::eColor, 0, voxel_albedo.storage->mips, 0, 1});
+        // cmd.clearColorImage(voxel_normal.storage->image, vk::ImageLayout::eGeneral, vk::ClearColorValue{0.0f, 0.0f, 0.0f, 0.0f}, vk::ImageSubresourceRange{vk::ImageAspectFlagBits::eColor, 0, voxel_normal.storage->mips, 0, 1});
+        // cmd.clearColorImage(voxel_radiance.storage->image, vk::ImageLayout::eGeneral, vk::ClearColorValue{0.0f, 0.0f, 0.0f, 0.0f}, vk::ImageSubresourceRange{vk::ImageAspectFlagBits::eColor, 0, voxel_radiance.storage->mips, 0, 1});
+        // cmd.pipelineBarrier(
+        //     vk::PipelineStageFlagBits::eTransfer,
+        //     vk::PipelineStageFlagBits::eFragmentShader,
+        //     {}, {}, {},
+        //     vk::ImageMemoryBarrier{
+        //         vk::AccessFlagBits::eTransferWrite,
+        //         vk::AccessFlagBits::eShaderWrite | vk::AccessFlagBits::eShaderRead,
+        //         vk::ImageLayout::eGeneral, vk::ImageLayout::eGeneral,
+        //         {}, {}, voxel_albedo.storage->image, {vk::ImageAspectFlagBits::eColor, 0, voxel_albedo.storage->mips, 0, 1}});
+        // cmd.pipelineBarrier(
+        //     vk::PipelineStageFlagBits::eTransfer,
+        //     vk::PipelineStageFlagBits::eFragmentShader,
+        //     {}, {}, {},
+        //     vk::ImageMemoryBarrier{
+        //         vk::AccessFlagBits::eTransferWrite,
+        //         vk::AccessFlagBits::eShaderWrite | vk::AccessFlagBits::eShaderRead,
+        //         vk::ImageLayout::eGeneral, vk::ImageLayout::eGeneral,
+        //         {}, {}, voxel_normal.storage->image, {vk::ImageAspectFlagBits::eColor, 0, voxel_normal.storage->mips, 0, 1}});
+        // cmd.pipelineBarrier(
+        //     vk::PipelineStageFlagBits::eTransfer,
+        //     vk::PipelineStageFlagBits::eComputeShader,
+        //     {}, {}, {},
+        //     vk::ImageMemoryBarrier{
+        //         vk::AccessFlagBits::eTransferWrite,
+        //         vk::AccessFlagBits::eShaderWrite | vk::AccessFlagBits::eShaderRead,
+        //         vk::ImageLayout::eGeneral, vk::ImageLayout::eGeneral,
+        //         {}, {}, voxel_radiance.storage->image, {vk::ImageAspectFlagBits::eColor, 0, voxel_radiance.storage->mips, 0, 1}});
         
-        cmd.beginRendering(vk::RenderingInfo{
-            {},
-            {{}, {256, 256}},
-            1,
-            0,
-        });
+        // cmd.beginRendering(vk::RenderingInfo{
+        //     {},
+        //     {{}, {256, 256}},
+        //     1,
+        //     0,
+        // });
 
-        cmd.setViewportWithCount(vk::Viewport{0.0f, 0.0, 256.0, 256.0, 0.0f, 1.0f});
-        cmd.setScissorWithCount(vk::Rect2D{{}, {256, 256}});
-        for(auto& gpum : scene.models) {
-            cmd.drawIndexed(gpum.index_count, 1, gpum.index_offset, gpum.vertex_offset, 0);
-        }
+        // cmd.setViewportWithCount(vk::Viewport{0.0f, 0.0, 256.0, 256.0, 0.0f, 1.0f});
+        // cmd.setScissorWithCount(vk::Rect2D{{}, {256, 256}});
+        // for(auto& gpum : scene.models) {
+        //     cmd.drawIndexed(gpum.index_count, 1, gpum.index_offset, gpum.vertex_offset, 0);
+        // }
                 
-        cmd.endRendering();
+        // cmd.endRendering();
 
-        cmd.writeTimestamp(vk::PipelineStageFlagBits::eFragmentShader, query_pool, 1);
+        // cmd.writeTimestamp(vk::PipelineStageFlagBits::eFragmentShader, query_pool, 1);
 
-        cmd.pipelineBarrier(
-            vk::PipelineStageFlagBits::eFragmentShader,
-            vk::PipelineStageFlagBits::eComputeShader,
-            {}, {}, {},
-            vk::ImageMemoryBarrier{
-                vk::AccessFlagBits::eShaderWrite,
-                vk::AccessFlagBits::eShaderRead | vk::AccessFlagBits::eShaderWrite,
-                vk::ImageLayout::eGeneral, vk::ImageLayout::eGeneral,
-                {}, {}, voxel_albedo.storage->image, {vk::ImageAspectFlagBits::eColor, 0, voxel_albedo.storage->mips, 0, 1}});
-        cmd.pipelineBarrier(
-            vk::PipelineStageFlagBits::eFragmentShader,
-            vk::PipelineStageFlagBits::eComputeShader,
-            {}, {}, {},
-            vk::ImageMemoryBarrier{
-                vk::AccessFlagBits::eShaderWrite,
-                vk::AccessFlagBits::eShaderRead | vk::AccessFlagBits::eShaderWrite,
-                vk::ImageLayout::eGeneral, vk::ImageLayout::eGeneral,
-                {}, {}, voxel_normal.storage->image, {vk::ImageAspectFlagBits::eColor, 0, voxel_normal.storage->mips, 0, 1}});
+        // cmd.pipelineBarrier(
+        //     vk::PipelineStageFlagBits::eFragmentShader,
+        //     vk::PipelineStageFlagBits::eComputeShader,
+        //     {}, {}, {},
+        //     vk::ImageMemoryBarrier{
+        //         vk::AccessFlagBits::eShaderWrite,
+        //         vk::AccessFlagBits::eShaderRead | vk::AccessFlagBits::eShaderWrite,
+        //         vk::ImageLayout::eGeneral, vk::ImageLayout::eGeneral,
+        //         {}, {}, voxel_albedo.storage->image, {vk::ImageAspectFlagBits::eColor, 0, voxel_albedo.storage->mips, 0, 1}});
+        // cmd.pipelineBarrier(
+        //     vk::PipelineStageFlagBits::eFragmentShader,
+        //     vk::PipelineStageFlagBits::eComputeShader,
+        //     {}, {}, {},
+        //     vk::ImageMemoryBarrier{
+        //         vk::AccessFlagBits::eShaderWrite,
+        //         vk::AccessFlagBits::eShaderRead | vk::AccessFlagBits::eShaderWrite,
+        //         vk::ImageLayout::eGeneral, vk::ImageLayout::eGeneral,
+        //         {}, {}, voxel_normal.storage->image, {vk::ImageAspectFlagBits::eColor, 0, voxel_normal.storage->mips, 0, 1}});
  
-        cmd.bindPipeline(vk::PipelineBindPoint::eCompute, pp_merge_voxels.pipeline);
-        cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, pp_merge_voxels.layout.layout, 0, global_set.set, {});
-        cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, pp_merge_voxels.layout.layout, 1, merge_voxels_set.set, {});
-        cmd.dispatch(256/8, 256/8, 256/8);
+        // cmd.bindPipeline(vk::PipelineBindPoint::eCompute, pp_merge_voxels.pipeline);
+        // cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, pp_merge_voxels.layout.layout, 0, global_set.set, {});
+        // cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, pp_merge_voxels.layout.layout, 1, merge_voxels_set.set, {});
+        // cmd.dispatch(256/8, 256/8, 256/8);
 
-        cmd.writeTimestamp(vk::PipelineStageFlagBits::eComputeShader, query_pool, 2);
+        // cmd.writeTimestamp(vk::PipelineStageFlagBits::eComputeShader, query_pool, 2);
 
-        cmd.pipelineBarrier(
-            vk::PipelineStageFlagBits::eComputeShader,
-            vk::PipelineStageFlagBits::eTransfer,
-            {}, {}, {},
-            vk::ImageMemoryBarrier{
-                vk::AccessFlagBits::eShaderWrite,
-                vk::AccessFlagBits::eTransferRead,
-                vk::ImageLayout::eGeneral, vk::ImageLayout::eGeneral,
-                {}, {}, voxel_radiance.storage->image, {vk::ImageAspectFlagBits::eColor, 0, voxel_radiance.storage->mips, 0, 1}});
+        // cmd.pipelineBarrier(
+        //     vk::PipelineStageFlagBits::eComputeShader,
+        //     vk::PipelineStageFlagBits::eTransfer,
+        //     {}, {}, {},
+        //     vk::ImageMemoryBarrier{
+        //         vk::AccessFlagBits::eShaderWrite,
+        //         vk::AccessFlagBits::eTransferRead,
+        //         vk::ImageLayout::eGeneral, vk::ImageLayout::eGeneral,
+        //         {}, {}, voxel_radiance.storage->image, {vk::ImageAspectFlagBits::eColor, 0, voxel_radiance.storage->mips, 0, 1}});
 
-        i32 size = 256;
-        for(u32 i=1; i<voxel_radiance.storage->mips; ++i) {
-            cmd.pipelineBarrier(
-                vk::PipelineStageFlagBits::eTransfer,
-                vk::PipelineStageFlagBits::eTransfer,
-                {}, {}, {},
-                vk::ImageMemoryBarrier{
-                    vk::AccessFlagBits::eTransferWrite,
-                    vk::AccessFlagBits::eTransferRead,
-                    vk::ImageLayout::eGeneral, vk::ImageLayout::eGeneral,
-                    {}, {}, voxel_radiance.storage->image, {vk::ImageAspectFlagBits::eColor, i-1, 2, 0, 1}});
-            i32 mip_size = size >> i;
-            cmd.blitImage(voxel_radiance.storage->image, vk::ImageLayout::eGeneral,
-                voxel_radiance.storage->image, vk::ImageLayout::eGeneral,
-                vk::ImageBlit{
-                    vk::ImageSubresourceLayers{vk::ImageAspectFlagBits::eColor, i-1, 0, 1},
-                    { vk::Offset3D{}, vk::Offset3D{mip_size<<1, mip_size<<1, mip_size<<1} },
-                    vk::ImageSubresourceLayers{vk::ImageAspectFlagBits::eColor, i, 0, 1},
-                    { vk::Offset3D{}, vk::Offset3D{mip_size, mip_size, mip_size} },
-                },
-                vk::Filter::eLinear);
-        }
+        // i32 size = 256;
+        // for(u32 i=1; i<voxel_radiance.storage->mips; ++i) {
+        //     cmd.pipelineBarrier(
+        //         vk::PipelineStageFlagBits::eTransfer,
+        //         vk::PipelineStageFlagBits::eTransfer,
+        //         {}, {}, {},
+        //         vk::ImageMemoryBarrier{
+        //             vk::AccessFlagBits::eTransferWrite,
+        //             vk::AccessFlagBits::eTransferRead,
+        //             vk::ImageLayout::eGeneral, vk::ImageLayout::eGeneral,
+        //             {}, {}, voxel_radiance.storage->image, {vk::ImageAspectFlagBits::eColor, i-1, 2, 0, 1}});
+        //     i32 mip_size = size >> i;
+        //     cmd.blitImage(voxel_radiance.storage->image, vk::ImageLayout::eGeneral,
+        //         voxel_radiance.storage->image, vk::ImageLayout::eGeneral,
+        //         vk::ImageBlit{
+        //             vk::ImageSubresourceLayers{vk::ImageAspectFlagBits::eColor, i-1, 0, 1},
+        //             { vk::Offset3D{}, vk::Offset3D{mip_size<<1, mip_size<<1, mip_size<<1} },
+        //             vk::ImageSubresourceLayers{vk::ImageAspectFlagBits::eColor, i, 0, 1},
+        //             { vk::Offset3D{}, vk::Offset3D{mip_size, mip_size, mip_size} },
+        //         },
+        //         vk::Filter::eLinear);
+        // }
 
-        cmd.writeTimestamp(vk::PipelineStageFlagBits::eTransfer, query_pool, 3);
+        // cmd.writeTimestamp(vk::PipelineStageFlagBits::eTransfer, query_pool, 3);
 
-        cmd.pipelineBarrier(
-            vk::PipelineStageFlagBits::eTransfer,
-            vk::PipelineStageFlagBits::eFragmentShader,
-            {}, {}, {},
-            vk::ImageMemoryBarrier{
-                vk::AccessFlagBits::eTransferWrite,
-                vk::AccessFlagBits::eShaderRead,
-                vk::ImageLayout::eGeneral, vk::ImageLayout::eGeneral,
-                {}, {}, voxel_radiance.storage->image, {vk::ImageAspectFlagBits::eColor, 0, voxel_radiance.storage->mips, 0, 1}});
+        // cmd.pipelineBarrier(
+        //     vk::PipelineStageFlagBits::eTransfer,
+        //     vk::PipelineStageFlagBits::eFragmentShader,
+        //     {}, {}, {},
+        //     vk::ImageMemoryBarrier{
+        //         vk::AccessFlagBits::eTransferWrite,
+        //         vk::AccessFlagBits::eShaderRead,
+        //         vk::ImageLayout::eGeneral, vk::ImageLayout::eGeneral,
+        //         {}, {}, voxel_radiance.storage->image, {vk::ImageAspectFlagBits::eColor, 0, voxel_radiance.storage->mips, 0, 1}});
 
-        cmd.pipelineBarrier(
-            vk::PipelineStageFlagBits::eTopOfPipe,
-            vk::PipelineStageFlagBits::eEarlyFragmentTests,
-            {}, {}, {},
-            vk::ImageMemoryBarrier{
-                vk::AccessFlagBits::eNone,
-                vk::AccessFlagBits::eDepthStencilAttachmentWrite | vk::AccessFlagBits::eDepthStencilAttachmentRead,
-                vk::ImageLayout::eUndefined,
-                vk::ImageLayout::eDepthAttachmentOptimal,
-                {},
-                {},
-                depth_texture.storage->image,
-                {vk::ImageAspectFlagBits::eDepth, 0, 1, 0, 1}
-            }
-        );
-        cmd.pipelineBarrier(
-            vk::PipelineStageFlagBits::eTopOfPipe,
-            vk::PipelineStageFlagBits::eColorAttachmentOutput,
-            {}, {}, {},
-            vk::ImageMemoryBarrier{
-                vk::AccessFlagBits::eNone,
-                vk::AccessFlagBits::eColorAttachmentWrite,
-                vk::ImageLayout::eUndefined,
-                vk::ImageLayout::eColorAttachmentOptimal,
-                {},
-                {},
-                swapchain_images.at(img),
-                {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1}
-            }
-        );
+        // cmd.pipelineBarrier(
+        //     vk::PipelineStageFlagBits::eTopOfPipe,
+        //     vk::PipelineStageFlagBits::eEarlyFragmentTests,
+        //     {}, {}, {},
+        //     vk::ImageMemoryBarrier{
+        //         vk::AccessFlagBits::eNone,
+        //         vk::AccessFlagBits::eDepthStencilAttachmentWrite | vk::AccessFlagBits::eDepthStencilAttachmentRead,
+        //         vk::ImageLayout::eUndefined,
+        //         vk::ImageLayout::eDepthAttachmentOptimal,
+        //         {},
+        //         {},
+        //         depth_texture.storage->image,
+        //         {vk::ImageAspectFlagBits::eDepth, 0, 1, 0, 1}
+        //     }
+        // );
+        // cmd.pipelineBarrier(
+        //     vk::PipelineStageFlagBits::eTopOfPipe,
+        //     vk::PipelineStageFlagBits::eColorAttachmentOutput,
+        //     {}, {}, {},
+        //     vk::ImageMemoryBarrier{
+        //         vk::AccessFlagBits::eNone,
+        //         vk::AccessFlagBits::eColorAttachmentWrite,
+        //         vk::ImageLayout::eUndefined,
+        //         vk::ImageLayout::eColorAttachmentOptimal,
+        //         {},
+        //         {},
+        //         swapchain_images.at(img),
+        //         {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1}
+        //     }
+        // );
         
-        vk::RenderingAttachmentInfo color1{
-            swapchain_views.at(img),
-            vk::ImageLayout::eColorAttachmentOptimal,
-            vk::ResolveModeFlagBits::eNone,
-            {},
-            {},
-            vk::AttachmentLoadOp::eClear,
-            vk::AttachmentStoreOp::eStore,
-            vk::ClearColorValue{0.0f, 0.0f, 0.0f, 1.0f} 
-        };
-        vk::RenderingAttachmentInfo depth{
-            depth_texture_view,
-            vk::ImageLayout::eDepthAttachmentOptimal,
-            vk::ResolveModeFlagBits::eNone,
-            {},
-            {},
-            vk::AttachmentLoadOp::eClear,
-            vk::AttachmentStoreOp::eStore,
-            vk::ClearDepthStencilValue{1.0f, 0}
-        };
+        // vk::RenderingAttachmentInfo color1{
+        //     swapchain_views.at(img),
+        //     vk::ImageLayout::eColorAttachmentOptimal,
+        //     vk::ResolveModeFlagBits::eNone,
+        //     {},
+        //     {},
+        //     vk::AttachmentLoadOp::eClear,
+        //     vk::AttachmentStoreOp::eStore,
+        //     vk::ClearColorValue{0.0f, 0.0f, 0.0f, 1.0f} 
+        // };
+        // vk::RenderingAttachmentInfo depth{
+        //     depth_texture_view,
+        //     vk::ImageLayout::eDepthAttachmentOptimal,
+        //     vk::ResolveModeFlagBits::eNone,
+        //     {},
+        //     {},
+        //     vk::AttachmentLoadOp::eClear,
+        //     vk::AttachmentStoreOp::eStore,
+        //     vk::ClearDepthStencilValue{1.0f, 0}
+        // };
 
-        cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, pp_default_lit.pipeline);
-        cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, pp_default_lit.layout.layout, 1, default_lit_set.set, {});
-        cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, pp_default_lit.layout.layout, 2, material_set.set, {});
-        cmd.beginRendering(vk::RenderingInfo{
-            {},
-            {{}, {1024, 768}},
-            1,
-            0,
-            color1,
-            &depth
-        });
+        // cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, pp_default_lit.pipeline);
+        // cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, pp_default_lit.layout.layout, 1, default_lit_set.set, {});
+        // cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, pp_default_lit.layout.layout, 2, material_set.set, {});
+        // cmd.beginRendering(vk::RenderingInfo{
+        //     {},
+        //     {{}, {1024, 768}},
+        //     1,
+        //     0,
+        //     color1,
+        //     &depth
+        // });
 
-        cmd.setViewportWithCount(vk::Viewport{0.0f, 768.0f, 1024.0f, -768.0f, 0.0f, 1.0f});
-        cmd.setScissorWithCount(vk::Rect2D{{}, {1024, 768}});
-        for(u32 idx = 0; auto& gpum : scene.models) {
-            cmd.drawIndexed(gpum.index_count, 1, gpum.index_offset, gpum.vertex_offset, idx);
-            ++idx;
-        }
+        // cmd.setViewportWithCount(vk::Viewport{0.0f, 768.0f, 1024.0f, -768.0f, 0.0f, 1.0f});
+        // cmd.setScissorWithCount(vk::Rect2D{{}, {1024, 768}});
+        // for(u32 idx = 0; auto& gpum : scene.models) {
+        //     cmd.drawIndexed(gpum.index_count, 1, gpum.index_offset, gpum.vertex_offset, idx);
+        //     ++idx;
+        // }
 
-        cmd.writeTimestamp(vk::PipelineStageFlagBits::eFragmentShader, query_pool, 4);
+        // cmd.writeTimestamp(vk::PipelineStageFlagBits::eFragmentShader, query_pool, 4);
 
-        draw_ui();
+        // draw_ui();
         
-        cmd.endRendering();
+        // cmd.endRendering();
 
-        cmd.pipelineBarrier(
-            vk::PipelineStageFlagBits::eColorAttachmentOutput,
-            vk::PipelineStageFlagBits::eBottomOfPipe,
-            {}, {}, {},
-            vk::ImageMemoryBarrier{
-                vk::AccessFlagBits::eColorAttachmentWrite,
-                vk::AccessFlagBits::eNone,
-                vk::ImageLayout::eColorAttachmentOptimal,
-                vk::ImageLayout::ePresentSrcKHR,
-                {},
-                {},
-                swapchain_images.at(img),
-                {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1}
-            }
-        );
+        // cmd.pipelineBarrier(
+        //     vk::PipelineStageFlagBits::eColorAttachmentOutput,
+        //     vk::PipelineStageFlagBits::eBottomOfPipe,
+        //     {}, {}, {},
+        //     vk::ImageMemoryBarrier{
+        //         vk::AccessFlagBits::eColorAttachmentWrite,
+        //         vk::AccessFlagBits::eNone,
+        //         vk::ImageLayout::eColorAttachmentOptimal,
+        //         vk::ImageLayout::ePresentSrcKHR,
+        //         {},
+        //         {},
+        //         swapchain_images.at(img),
+        //         {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1}
+        //     }
+        // );
+
+        render_graph->render(cmd, swapchain_images.at(img), swapchain_views.at(img));
 
         cmd.end();
         vk::PipelineStageFlags wait_masks[] {
@@ -499,7 +501,7 @@ void Renderer::draw() {
         float compute_radiance_time = float(result[2] - result[1]) * to_ms;
         float radiance_mip_time = float(result[3] - result[2]) * to_ms;
         float default_lit_time = float(result[4] - result[3]) * to_ms;
-        spdlog::info("Vox: {:3.2f}, Rad: {:3.2f}, Mip: {:3.2f} Light: {:3.2f}", voxelization_time, compute_radiance_time, radiance_mip_time, default_lit_time);
+        // spdlog::info("Vox: {:3.2f}, Rad: {:3.2f}, Mip: {:3.2f} Light: {:3.2f}", voxelization_time, compute_radiance_time, radiance_mip_time, default_lit_time);
         
         device.waitIdle();
     }
@@ -551,6 +553,8 @@ bool Renderer::initialize_vulkan() {
     vk::PhysicalDeviceDescriptorIndexingFeatures desc_idx_features;
     vk::PhysicalDeviceDynamicRenderingFeatures dyn_rend_features;
     vk::PhysicalDeviceHostQueryResetFeatures host_query_features;
+    vk::PhysicalDeviceSynchronization2Features synch2_features;
+    synch2_features.synchronization2 = true;
     host_query_features.hostQueryReset = true;
     dyn_rend_features.dynamicRendering = true;
     desc_idx_features.descriptorBindingVariableDescriptorCount = true;
@@ -566,6 +570,7 @@ bool Renderer::initialize_vulkan() {
         .add_pNext(&desc_idx_features)
         .add_pNext(&dyn_rend_features)
         .add_pNext(&host_query_features)
+        .add_pNext(&synch2_features)
         .build();
     if(!device_builder_result) {
         spdlog::error("Vulkan: failed to create device: {}", device_builder_result.error().message());
@@ -966,6 +971,7 @@ bool Renderer::initialize_render_passes() {
     const auto res_voxel_normal = render_graph->add_resource(RGResource{"voxel_normal", voxel_normal.storage});
     const auto res_voxel_radiance = render_graph->add_resource(RGResource{"voxel_radiance", voxel_radiance.storage});
     const auto res_color_attachment = render_graph->add_resource(RGResource{"color_attachment", nullptr});
+    const auto res_depth_attachment = render_graph->add_resource(RGResource{"depth_attachment", depth_texture.storage});
 
     const auto create_clear_pass = [&](RgResourceHandle resource) {
         RenderPass pass_clear;
@@ -1083,6 +1089,13 @@ bool Renderer::initialize_render_passes() {
         .write_color_attachment(RPResource{
             res_color_attachment,
             RGSyncStage::ColorAttachmentOutput,
+            TextureInfo{
+                .required_layout = RGImageLayout::Attachment
+            }
+        })
+        .write_depth_attachment(RPResource{
+            res_depth_attachment,
+            RGSyncStage::EarlyFragment,
             TextureInfo{
                 .required_layout = RGImageLayout::Attachment
             }

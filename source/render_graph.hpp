@@ -2,7 +2,8 @@
 #include "types.hpp"
 #include <vector>
 #include <string>
-#include <unordered_map>
+#include <optional>
+#include <map>
 #include <iostream>
 #include <format>
 #include <functional>
@@ -25,6 +26,10 @@ enum class RGAccessType {
 
 enum class RGImageAspect { 
     None, Color, Depth 
+};
+
+enum class RGAttachmentLoadStoreOp {
+    DontCare, Clear, Load, Store, None
 };
 
 using RgResourceHandle = uint64_t;
@@ -72,6 +77,7 @@ struct RPResource {
     RgResourceHandle resource;
     RGSyncStage stage;
     RGResourceUsage usage{RGResourceUsage::None};
+    RGAttachmentLoadStoreOp load_op{RGAttachmentLoadStoreOp::Clear}, store_op{RGAttachmentLoadStoreOp::Store};
     union {
         BufferInfo buffer_info;
         TextureInfo texture_info;
@@ -115,15 +121,17 @@ struct RenderPass {
         return *this;
     }
 
-    RenderPass& read_color_attachment(RPResource info) {
-        info.usage = RGResourceUsage::ColorAttachment;
-        read_resources.push_back(info);
-        return *this;
-    }
-
     RenderPass& write_color_attachment(RPResource info) {
         info.usage = RGResourceUsage::ColorAttachment;
         write_resources.push_back(info);
+        color_attachments.push_back(write_resources.size() - 1);
+        return *this;
+    }
+
+    RenderPass& write_depth_attachment(RPResource info) {
+        info.usage = RGResourceUsage::DepthAttachment;
+        write_resources.push_back(info);
+        depth_attachment = write_resources.size() - 1;
         return *this;
     }
 
@@ -143,6 +151,8 @@ struct RenderPass {
     RenderPassRenderingExtent extent;
     std::vector<RPResource> write_resources;
     std::vector<RPResource> read_resources;
+    std::vector<u32> color_attachments; 
+    std::optional<u32> depth_attachment;
 };
 
 class RenderGraph {
@@ -161,21 +171,34 @@ public:
         return resources.at(resource);
     }
 
+    void clear_resources() { 
+        resources.clear(); 
+        passes.clear();
+        stage_deps.clear();
+        stage_pass_counts.clear();
+        //todo: add them to deletion queue
+        image_views.clear();
+    }
+
     void bake_graph();
+    void render(vk::CommandBuffer cmd, vk::Image swapchain_image, vk::ImageView swapchain_view);
     
 private:
     struct PassDependencies {
-        std::vector<vk::ImageMemoryBarrier2> mem_barriers;
-        std::vector<vk::ImageMemoryBarrier2> attachment_barriers; // need special handling like vk::Image patching during rendering
+        std::vector<vk::ImageMemoryBarrier2> image_barriers;
+        std::optional<vk::ImageMemoryBarrier2> swapchain_image_barrier; // need special handling like vk::Image patching during rendering
     };
     struct BarrierStages {
         vk::PipelineStageFlags2 src_stage, dst_stage;
         vk::AccessFlags2 src_access, dst_access;
     };
-    BarrierStages deduce_stages_and_accesses(const RenderPass* src_pass, const RenderPass* dst_pass, RPResource& src_resource, RPResource& dst_resource, bool src_read, bool dst_read);
+
+    void create_rendering_resources();
+    BarrierStages deduce_stages_and_accesses(const RenderPass* src_pass, const RenderPass* dst_pass, const RPResource& src_resource, const RPResource& dst_resource, bool src_read, bool dst_read) const;
 
     std::vector<RGResource> resources;
     std::vector<RenderPass> passes;
     std::vector<PassDependencies> stage_deps;
-    std::vector<u32> stage_pass_count;
+    std::vector<u32> stage_pass_counts;
+    std::map<std::pair<const RenderPass*, RgResourceHandle>, vk::ImageView> image_views;
 };

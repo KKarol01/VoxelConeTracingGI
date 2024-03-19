@@ -194,7 +194,8 @@ Pipeline PipelineBuilder::build_graphics(std::string_view label) {
 
     return Pipeline{
         .pipeline = pipeline,
-        .layout = layout
+        .layout = layout,
+        .type = PipelineType::Graphics
     };
 } 
 
@@ -215,7 +216,8 @@ Pipeline PipelineBuilder::build_compute(std::string_view label) {
 
     return Pipeline{
         .pipeline = pipeline,
-        .layout = layout
+        .layout = layout,
+        .type = PipelineType::Compute
     };
 }
 
