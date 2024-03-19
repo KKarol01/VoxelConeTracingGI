@@ -245,10 +245,10 @@ void RenderGraph::bake_graph() {
                     }
 
                     vk::ImageLayout old_layout, new_layout;
-                    old_layout = graph_resource.texture->current_layout;
                     new_layout = to_vk_layout(pass_resource.texture_info.required_layout);
 
                     if(!access) {
+                        old_layout = graph_resource.texture->current_layout;
                         if(old_layout == new_layout) {
                             continue;
                         }
@@ -260,6 +260,12 @@ void RenderGraph::bake_graph() {
                             barrier_stage = access_stage + 1u;
                         }
 
+                        old_layout = to_vk_layout(access->layout);
+
+                        //deduce stages
+                        // get image
+                        // get range
+                        // update ranges
                         access->
                     }
 
