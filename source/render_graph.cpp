@@ -193,7 +193,6 @@ void RenderGraph::bake_graph() {
 
     std::vector<std::vector<ResourceIndex>> stages;
     std::vector<PassDependencies> stage_dependencies;
-    std::unordered_map<RgResourceHandle, std::vector<std::pair<RenderPass*, TextureRange>>> last_modified, last_read;
     std::unordered_map<RenderPass*, uint32_t> pass_stage;
 
     const auto get_stage = [&](u64 idx) -> auto& { 
@@ -204,170 +203,199 @@ void RenderGraph::bake_graph() {
         stage_dependencies.resize(std::max(stage_dependencies.size(), idx+1));
         return stage_dependencies.at(idx);
     };
-    const auto find_intersection = [&](std::unordered_map<RgResourceHandle, std::vector<std::pair<RenderPass*, TextureRange>>>& ranges, RgResourceHandle handle, TextureRange range) -> std::pair<RenderPass*, TextureRange>* {
-        if(!ranges.contains(handle)) { return nullptr; }
-
-        for(auto& it : ranges.at(handle)) {
-            auto& [p, r] = it;
-            if(r.base_mip < range.base_mip + range.mips && 
-               r.base_mip + r.mips > range.base_mip &&
-               r.base_layer < range.base_layer + range.layers &&
-               r.base_layer + r.layers > range.base_layer) {
-                return &it;
-            }
-        }
-
-        return nullptr;
-    };
-    const auto find_in_written_resources = [&](RgResourceHandle idx, RenderPass* pass) -> auto* {
-        auto it = std::find_if(begin(pass->write_resources), end(pass->write_resources), [idx](auto&& e) { return e.resource == idx; });
-        return it != end(pass->write_resources) ? &*it : nullptr;
-    };
-    const auto find_in_read_resources = [&](RgResourceHandle idx, RenderPass* pass) -> auto* {
-        auto it = std::find_if(begin(pass->read_resources), end(pass->read_resources), [idx](auto&& e) { return e.resource == idx; });
-        return it != end(pass->read_resources) ? &*it : nullptr;
-    };
     
     for(u32 pass_idx = 0; auto& pass : passes) {
         u32 stage = 0u;
-        std::vector<RPResource>* pass_rw_resources[] {
-            &pass.read_resources,
-            &pass.write_resources
-        };
-        bool pass_rw_is_read[] { true, false };
 
-        for(auto i=0u; i<sizeof(pass_rw_resources) / sizeof(pass_rw_resources[0]); ++i) {
-            auto* pass_resources = pass_rw_resources[i];
-            const auto is_being_read = pass_rw_is_read[i];
+        for(auto& pass_resource : pass.resources) {
+            auto& graph_resource = resources.at(pass_resource.resource); 
+            u32 barrier_stage = 0u;
 
-            for(auto& pass_resource : *pass_resources) {
-                u32 barrier_stage = 0u;
-                auto& pass_rg_resource = resources.at(pass_resource.resource);
-                auto last_read_in = find_intersection(last_read, pass_resource.resource, pass_resource.texture_info.range);
-                auto last_written_in = find_intersection(last_modified, pass_resource.resource, pass_resource.texture_info.range);
-                const auto was_being_read = last_read_in != nullptr;
-                const auto was_being_written = last_written_in != nullptr;
-
-                stage = std::max({
-                    stage, 
-                                    // 1u to move to the next stage, so the appropriate barrier can be inserted before this read/write.
-                    was_being_read    ? 1u + pass_stage.at(last_read_in->first) : stage,
-                    was_being_written ? 1u + pass_stage.at(last_written_in->first) : stage
-                });
-                barrier_stage = std::max({
-                    barrier_stage, 
-                    was_being_read    ? 1u + pass_stage.at(last_read_in->first) : barrier_stage,
-                    was_being_written ? 1u + pass_stage.at(last_written_in->first) : barrier_stage
-                });
-
-                bool no_layout_transition = true;
-                BarrierStages deduced_stages;
-                RGImageLayout src_layout{RGImageLayout::Undefined}, dst_layout = pass_resource.texture_info.required_layout;
-                RPResource* read_resource{nullptr};
-                RPResource* written_resource{nullptr};
-                if(was_being_read)      { read_resource = find_in_read_resources(pass_resource.resource, last_read_in->first); }
-                if(was_being_written)   { written_resource = find_in_written_resources(pass_resource.resource, last_written_in->first); }
-                if(pass_resource.usage == RGResourceUsage::Image &&
-                   !was_being_read && 
-                   !was_being_written && 
-                   pass_rg_resource.texture->current_layout != to_vk_layout(pass_resource.texture_info.required_layout)) {
-                    deduced_stages = deduce_stages_and_accesses(nullptr, &pass, pass_resource, pass_resource, false, is_being_read);    
-                    no_layout_transition = false;
-                } else if(pass_resource.usage == RGResourceUsage::ColorAttachment || 
-                          pass_resource.usage == RGResourceUsage::DepthAttachment) {
-
-                    if(!is_being_read) {
-                        pass_resource.load_op = RGAttachmentLoadStoreOp::Clear;
-                        pass_resource.store_op = RGAttachmentLoadStoreOp::Store;
+            switch (pass_resource.usage) {
+                case RGResourceUsage::ColorAttachment:
+                case RGResourceUsage::DepthAttachment:
+                case RGResourceUsage::Image: {
+                    auto& txt_info = pass_resource.texture_info;
+                    const auto is_read = pass_resource.is_read;
+                    
+                    const RGTextureAccess* access{};
+                    bool is_access_read;
+                    if(is_read) {
+                        access = graph_resource.texture_accesses.find_intersection_in_writes(txt_info.range);
+                        is_access_read = false;
                     } else {
-                        pass_resource.load_op = RGAttachmentLoadStoreOp::Load;
-                        pass_resource.store_op = RGAttachmentLoadStoreOp::None;
-                    }
-
-                    if(!was_being_read && !was_being_written) {
-                        deduced_stages.src_stage = vk::PipelineStageFlagBits2::eNone;
-                        deduced_stages.src_access = vk::AccessFlagBits2::eNone;
-                        deduced_stages.dst_stage = to_vk_pipeline_stage(pass_resource.stage);
-                        if(pass_resource.usage == RGResourceUsage::ColorAttachment) {
-                            deduced_stages.dst_access = is_being_read ? vk::AccessFlagBits2::eColorAttachmentRead : vk::AccessFlagBits2::eColorAttachmentWrite;
-                        } else if(pass_resource.usage == RGResourceUsage::DepthAttachment) {
-                            deduced_stages.dst_access = is_being_read ? vk::AccessFlagBits2::eDepthStencilAttachmentRead : vk::AccessFlagBits2::eDepthStencilAttachmentWrite;
+                        const auto* write_access = graph_resource.texture_accesses.find_intersection_in_writes(txt_info.range);
+                        const auto* read_access = graph_resource.texture_accesses.find_intersection_in_reads(txt_info.range);
+                        const auto write_stage = write_access ? pass_stage.at(write_access->pass) : 0;
+                        const auto read_stage = read_access ? pass_stage.at(read_access->pass) : 0;
+                        if(write_stage > 0 && write_stage == read_stage) {
+                            spdlog::error("write and read happening in the same stage. this is an error!");
+                            std::abort();
                         }
-                        no_layout_transition = false;
-                    }
-                }
-                
-                if(was_being_written && is_being_read) { 
-                    // read-after-write
-                    deduced_stages = deduce_stages_and_accesses(last_written_in->first, &pass, *written_resource, pass_resource, false, true);
-                    src_layout = written_resource->texture_info.required_layout;
-                } else if(was_being_written && !is_being_read) { 
-                    // write-after-write
-                    deduced_stages = deduce_stages_and_accesses(last_written_in->first, &pass, *written_resource, pass_resource, false, false);
-                    src_layout = written_resource->texture_info.required_layout;
-                } else if(was_being_read && !is_being_read) { 
-                    // write-after-read
-                    deduced_stages = deduce_stages_and_accesses(last_read_in->first, &pass, *read_resource, pass_resource, true, false);
-                    src_layout = read_resource->texture_info.required_layout;
-                } else if(no_layout_transition) {
-                    // read-after-read and no layout transition needed, or no initial layout transition needed
-                    continue;
-                }
-
-                spdlog::debug("Resource {} is getting a barrier between passes {} -> {} in stage {}. Barrier: [{} {}] [{} {}] layout {} -> {} loadop: {} storeop: {}, range: [{} {} {} {}]", 
-                    pass_rg_resource.name,
-                    was_being_read ? last_read_in->first->name : was_being_written ? last_written_in->first->name : "None",
-                    pass.name, 
-                    barrier_stage,
-                    vk::to_string(deduced_stages.src_stage),
-                    vk::to_string(deduced_stages.src_access),
-                    vk::to_string(deduced_stages.dst_stage),
-                    vk::to_string(deduced_stages.dst_access),
-                    vk::to_string(to_vk_layout(src_layout)),
-                    vk::to_string(to_vk_layout(dst_layout)),
-                    vk::to_string(to_vk_load_op(pass_resource.load_op)),
-                    vk::to_string(to_vk_store_op(pass_resource.store_op)),
-                    pass_resource.texture_info.range.base_mip,
-                    pass_resource.texture_info.range.mips,
-                    pass_resource.texture_info.range.base_layer,
-                    pass_resource.texture_info.range.layers);
-
-                std::vector<vk::ImageMemoryBarrier2>* barrier_storage{nullptr};
-                vk::ImageMemoryBarrier2 barrier{
-                    deduced_stages.src_stage,
-                    deduced_stages.src_access,
-                    deduced_stages.dst_stage,
-                    deduced_stages.dst_access,
-                    to_vk_layout(src_layout),
-                    to_vk_layout(dst_layout),
-                    vk::QueueFamilyIgnored,
-                    vk::QueueFamilyIgnored,
-                    vk::Image{},
-                    to_vk_subresource_range(pass_resource.texture_info.range, pass_resource.usage == RGResourceUsage::DepthAttachment ? RGImageAspect::Depth : RGImageAspect::Color)
-                };
-                
-                switch(pass_resource.usage) {
-                    case RGResourceUsage::Image:
-                    case RGResourceUsage::ColorAttachment:
-                    case RGResourceUsage::DepthAttachment: {
-                        if(pass_rg_resource.texture) {
-                            barrier_storage = &get_stage_dependencies(barrier_stage).image_barriers;
-                            barrier.setImage(pass_rg_resource.texture->image);
-                        } else {
-                            // swapchain image case
-                            get_stage_dependencies(barrier_stage).swapchain_image_barrier = barrier;                
+                        if(write_access && !read_access) {
+                            access = write_access;
+                            is_access_read = false;
+                        } else if(!write_access && read_access) {
+                            access = read_access;
+                            is_access_read = true;
+                        } else if(write_access && read_access) {
+                            if(write_stage > read_stage) { access = write_access; is_access_read = false; }
+                            else                         { access = read_access; is_access_read = true; }
                         }
-                    } break;
-                    default: {
-                        spdlog::error("Unrecognized pass resource usage {}. Cannot select appropriate barrier storage.", (u32)pass_resource.usage);
-                        std::abort();
                     }
-                }
 
-                if(barrier_storage) {
-                    barrier_storage->push_back(barrier);
-                } 
+                    vk::ImageLayout old_layout, new_layout;
+                    old_layout = graph_resource.texture->current_layout;
+                    new_layout = to_vk_layout(pass_resource.texture_info.required_layout);
+
+                    if(!access) {
+                        if(old_layout == new_layout) {
+                            continue;
+                        }
+                    } else {
+                        const auto access_stage = pass_stage.at(access->pass);
+                        if(is_access_read && is_read) {
+                            barrier_stage = access_stage;
+                        } else if(!is_read) {
+                            barrier_stage = access_stage + 1u;
+                        }
+
+                        access->
+                    }
+
+                } break;
+                default: {
+                    spdlog::error("Unrecognized pass resource usage {}", (u32)pass_resource.usage);
+                    std::abort();
+                }
             }
+            
+            auto& pass_rg_resource = resources.at(pass_resource.resource);
+            auto last_read_in = find_intersection(last_read, pass_resource.resource, pass_resource.texture_info.range);
+            auto last_written_in = find_intersection(last_modified, pass_resource.resource, pass_resource.texture_info.range);
+            const auto was_being_read = last_read_in != nullptr;
+            const auto was_being_written = last_written_in != nullptr;
+
+            stage = std::max({
+                stage, 
+                                // 1u to move to the next stage, so the appropriate barrier can be inserted before this read/write.
+                was_being_read    ? 1u + pass_stage.at(last_read_in->first) : stage,
+                was_being_written ? 1u + pass_stage.at(last_written_in->first) : stage
+            });
+            barrier_stage = std::max({
+                barrier_stage, 
+                was_being_read    ? 1u + pass_stage.at(last_read_in->first) : barrier_stage,
+                was_being_written ? 1u + pass_stage.at(last_written_in->first) : barrier_stage
+            });
+
+            bool no_layout_transition = true;
+            BarrierStages deduced_stages;
+            RGImageLayout src_layout{RGImageLayout::Undefined}, dst_layout = pass_resource.texture_info.required_layout;
+            RPResource* read_resource{nullptr};
+            RPResource* written_resource{nullptr};
+            if(was_being_read)      { read_resource = find_in_read_resources(pass_resource.resource, last_read_in->first); }
+            if(was_being_written)   { written_resource = find_in_written_resources(pass_resource.resource, last_written_in->first); }
+            if(pass_resource.usage == RGResourceUsage::Image &&
+                !was_being_read && 
+                !was_being_written && 
+                pass_rg_resource.texture->current_layout != to_vk_layout(pass_resource.texture_info.required_layout)) {
+                deduced_stages = deduce_stages_and_accesses(nullptr, &pass, pass_resource, pass_resource, false, is_being_read);    
+                no_layout_transition = false;
+            } else if(pass_resource.usage == RGResourceUsage::ColorAttachment || 
+                        pass_resource.usage == RGResourceUsage::DepthAttachment) {
+
+                if(!is_being_read) {
+                    pass_resource.load_op = RGAttachmentLoadStoreOp::Clear;
+                    pass_resource.store_op = RGAttachmentLoadStoreOp::Store;
+                } else {
+                    pass_resource.load_op = RGAttachmentLoadStoreOp::Load;
+                    pass_resource.store_op = RGAttachmentLoadStoreOp::None;
+                }
+
+                if(!was_being_read && !was_being_written) {
+                    deduced_stages.src_stage = vk::PipelineStageFlagBits2::eNone;
+                    deduced_stages.src_access = vk::AccessFlagBits2::eNone;
+                    deduced_stages.dst_stage = to_vk_pipeline_stage(pass_resource.stage);
+                    if(pass_resource.usage == RGResourceUsage::ColorAttachment) {
+                        deduced_stages.dst_access = is_being_read ? vk::AccessFlagBits2::eColorAttachmentRead : vk::AccessFlagBits2::eColorAttachmentWrite;
+                    } else if(pass_resource.usage == RGResourceUsage::DepthAttachment) {
+                        deduced_stages.dst_access = is_being_read ? vk::AccessFlagBits2::eDepthStencilAttachmentRead : vk::AccessFlagBits2::eDepthStencilAttachmentWrite;
+                    }
+                    no_layout_transition = false;
+                }
+            }
+            
+            if(was_being_written && is_being_read) { 
+                // read-after-write
+                deduced_stages = deduce_stages_and_accesses(last_written_in->first, &pass, *written_resource, pass_resource, false, true);
+                src_layout = written_resource->texture_info.required_layout;
+            } else if(was_being_written && !is_being_read) { 
+                // write-after-write
+                deduced_stages = deduce_stages_and_accesses(last_written_in->first, &pass, *written_resource, pass_resource, false, false);
+                src_layout = written_resource->texture_info.required_layout;
+            } else if(was_being_read && !is_being_read) { 
+                // write-after-read
+                deduced_stages = deduce_stages_and_accesses(last_read_in->first, &pass, *read_resource, pass_resource, true, false);
+                src_layout = read_resource->texture_info.required_layout;
+            } else if(no_layout_transition) {
+                // read-after-read and no layout transition needed, or no initial layout transition needed
+                continue;
+            }
+
+            spdlog::debug("Resource {} is getting a barrier between passes {} -> {} in stage {}. Barrier: [{} {}] [{} {}] layout {} -> {} loadop: {} storeop: {}, range: [{} {} {} {}]", 
+                pass_rg_resource.name,
+                was_being_read ? last_read_in->first->name : was_being_written ? last_written_in->first->name : "None",
+                pass.name, 
+                barrier_stage,
+                vk::to_string(deduced_stages.src_stage),
+                vk::to_string(deduced_stages.src_access),
+                vk::to_string(deduced_stages.dst_stage),
+                vk::to_string(deduced_stages.dst_access),
+                vk::to_string(to_vk_layout(src_layout)),
+                vk::to_string(to_vk_layout(dst_layout)),
+                vk::to_string(to_vk_load_op(pass_resource.load_op)),
+                vk::to_string(to_vk_store_op(pass_resource.store_op)),
+                pass_resource.texture_info.range.base_mip,
+                pass_resource.texture_info.range.mips,
+                pass_resource.texture_info.range.base_layer,
+                pass_resource.texture_info.range.layers);
+
+            std::vector<vk::ImageMemoryBarrier2>* barrier_storage{nullptr};
+            vk::ImageMemoryBarrier2 barrier{
+                deduced_stages.src_stage,
+                deduced_stages.src_access,
+                deduced_stages.dst_stage,
+                deduced_stages.dst_access,
+                to_vk_layout(src_layout),
+                to_vk_layout(dst_layout),
+                vk::QueueFamilyIgnored,
+                vk::QueueFamilyIgnored,
+                vk::Image{},
+                to_vk_subresource_range(pass_resource.texture_info.range, pass_resource.usage == RGResourceUsage::DepthAttachment ? RGImageAspect::Depth : RGImageAspect::Color)
+            };
+            
+            switch(pass_resource.usage) {
+                case RGResourceUsage::Image:
+                case RGResourceUsage::ColorAttachment:
+                case RGResourceUsage::DepthAttachment: {
+                    if(pass_rg_resource.texture) {
+                        barrier_storage = &get_stage_dependencies(barrier_stage).image_barriers;
+                        barrier.setImage(pass_rg_resource.texture->image);
+                    } else {
+                        // swapchain image case
+                        get_stage_dependencies(barrier_stage).swapchain_image_barrier = barrier;                
+                    }
+                } break;
+                default: {
+                    spdlog::error("Unrecognized pass resource usage {}. Cannot select appropriate barrier storage.", (u32)pass_resource.usage);
+                    std::abort();
+                }
+            }
+
+            if(barrier_storage) {
+                barrier_storage->push_back(barrier);
+            } 
+        }
         }
 
         for(auto &r : pass.read_resources) { 

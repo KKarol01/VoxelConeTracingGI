@@ -56,15 +56,74 @@ struct TextureInfo {
     TextureRange range;
 };
 
+struct RenderPass;
+struct RGTextureAccess {
+    bool intersects(TextureRange r) const {
+        return (
+            range.base_mip < r.base_mip + r.mips &&
+            range.base_mip + range.mips > r.base_mip &&
+            range.base_layer < r.base_layer + r.layers &&
+            range.base_layer + range.layers > r.base_layer
+        );
+    }
+
+    RenderPass* pass{};
+    RGImageLayout layout{RGImageLayout::Undefined};
+    TextureRange range;
+};
+
+struct RGTextureAccesses {
+
+    const RGTextureAccess* find_intersection_in_reads(TextureRange range) const {
+        for(const auto& e : last_read) {
+            if(e.intersects(range)) { return &e; }
+        }
+        return nullptr;
+    }
+
+    const RGTextureAccess* find_intersection_in_writes(TextureRange range) const {
+        for(const auto& e : last_written) {
+            if(e.intersects(range)) { return &e; }
+        }
+        return nullptr;
+    }
+
+    std::vector<RGTextureAccess> last_read, last_written;
+};
+
 struct RGResource {
     // RGResource(const std::string& name, Buffer* buffer): name(name), type(RGResourceType::Buffer) {}
     RGResource(const std::string& name, TextureStorage* texture): name(name), type(RGResourceType::Texture), texture(texture) {}
+
+    RGResource(const RGResource& o) noexcept { *this = o; }
+    RGResource& operator=(const RGResource& o) noexcept {
+        assert(type == RGResourceType::Texture);
+        name = o.name;
+        type = o.type;
+        texture = o.texture;
+        texture_accesses = o.texture_accesses;
+        return *this;
+    }
+    RGResource(RGResource&& o) noexcept { *this = std::move(o); }
+    RGResource& operator=(RGResource&& o) noexcept {
+        assert(type == RGResourceType::Texture);
+        name = std::move(o.name);
+        type = o.type;
+        texture = o.texture;
+        texture_accesses = std::move(o.texture_accesses);
+        return *this;
+    }
+    ~RGResource() noexcept {}
     
     std::string name;
     RGResourceType type{RGResourceType::None};
     union {
         // Buffer* buffer;
         TextureStorage* texture;
+    };
+
+    union {
+        RGTextureAccesses texture_accesses;
     };
 };
 
@@ -82,6 +141,7 @@ struct RPResource {
         BufferInfo buffer_info;
         TextureInfo texture_info;
     };
+    bool is_read;
 };
 
 struct RenderPassRenderingViewport {
@@ -111,27 +171,31 @@ struct RenderPass {
 
     RenderPass& write_to_image(RPResource info) {
         info.usage = RGResourceUsage::Image;
-        write_resources.push_back(info);
+        info.is_read = false;
+        resources.push_back(info);
         return *this;
     }
 
     RenderPass& read_from_image(RPResource info) {
         info.usage = RGResourceUsage::Image;
-        read_resources.push_back(info);
+        resources.push_back(info);
+        info.is_read = true;
         return *this;
     }
 
     RenderPass& write_color_attachment(RPResource info) {
         info.usage = RGResourceUsage::ColorAttachment;
-        write_resources.push_back(info);
-        color_attachments.push_back(write_resources.size() - 1);
+        resources.push_back(info);
+        color_attachments.push_back(resources.size() - 1);
+        info.is_read = false;
         return *this;
     }
 
     RenderPass& write_depth_attachment(RPResource info) {
         info.usage = RGResourceUsage::DepthAttachment;
-        write_resources.push_back(info);
-        depth_attachment = write_resources.size() - 1;
+        resources.push_back(info);
+        depth_attachment = resources.size() - 1;
+        info.is_read = false;
         return *this;
     }
 
@@ -149,8 +213,7 @@ struct RenderPass {
     Pipeline* pipeline{};
     std::function<void()> func;
     RenderPassRenderingExtent extent;
-    std::vector<RPResource> write_resources;
-    std::vector<RPResource> read_resources;
+    std::vector<RPResource> resources;
     std::vector<u32> color_attachments; 
     std::optional<u32> depth_attachment;
 };
@@ -193,6 +256,7 @@ private:
         vk::AccessFlags2 src_access, dst_access;
     };
 
+    void handle_image_pass_resource();
     void create_rendering_resources();
     BarrierStages deduce_stages_and_accesses(const RenderPass* src_pass, const RenderPass* dst_pass, const RPResource& src_resource, const RPResource& dst_resource, bool src_read, bool dst_read) const;
 
