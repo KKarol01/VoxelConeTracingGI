@@ -467,23 +467,23 @@ void Renderer::draw() {
         
         // cmd.endRendering();
 
-        // cmd.pipelineBarrier(
-        //     vk::PipelineStageFlagBits::eColorAttachmentOutput,
-        //     vk::PipelineStageFlagBits::eBottomOfPipe,
-        //     {}, {}, {},
-        //     vk::ImageMemoryBarrier{
-        //         vk::AccessFlagBits::eColorAttachmentWrite,
-        //         vk::AccessFlagBits::eNone,
-        //         vk::ImageLayout::eColorAttachmentOptimal,
-        //         vk::ImageLayout::ePresentSrcKHR,
-        //         {},
-        //         {},
-        //         swapchain_images.at(img),
-        //         {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1}
-        //     }
-        // );
 
         render_graph->render(cmd, swapchain_images.at(img), swapchain_views.at(img));
+        cmd.pipelineBarrier(
+            vk::PipelineStageFlagBits::eColorAttachmentOutput,
+            vk::PipelineStageFlagBits::eBottomOfPipe,
+            {}, {}, {},
+            vk::ImageMemoryBarrier{
+                vk::AccessFlagBits::eColorAttachmentWrite,
+                vk::AccessFlagBits::eNone,
+                vk::ImageLayout::eColorAttachmentOptimal,
+                vk::ImageLayout::ePresentSrcKHR,
+                {},
+                {},
+                swapchain_images.at(img),
+                {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1}
+            }
+        );
 
         cmd.end();
         vk::PipelineStageFlags wait_masks[] {
@@ -495,12 +495,13 @@ void Renderer::draw() {
             fr.rendering_semaphore, swapchain, image_indices
         });
 
-        auto result = device.getQueryPoolResults<u64>(query_pool, 0u, 5u, 5u*sizeof(u64), sizeof(u64), vk::QueryResultFlagBits::e64 | vk::QueryResultFlagBits::eWait).value;
-        const float to_ms = tick_length * 0.000001f;
-        float voxelization_time = float(result[1] - result[0]) * to_ms;
-        float compute_radiance_time = float(result[2] - result[1]) * to_ms;
-        float radiance_mip_time = float(result[3] - result[2]) * to_ms;
-        float default_lit_time = float(result[4] - result[3]) * to_ms;
+        /* This waits indefinitely if no query was made */
+        // auto result = device.getQueryPoolResults<u64>(query_pool, 0u, 5u, 5u*sizeof(u64), sizeof(u64), vk::QueryResultFlagBits::e64 | vk::QueryResultFlagBits::eWait).value;
+        // const float to_ms = tick_length * 0.000001f;
+        // float voxelization_time = float(result[1] - result[0]) * to_ms;
+        // float compute_radiance_time = float(result[2] - result[1]) * to_ms;
+        // float radiance_mip_time = float(result[3] - result[2]) * to_ms;
+        // float default_lit_time = float(result[4] - result[3]) * to_ms;
         // spdlog::info("Vox: {:3.2f}, Rad: {:3.2f}, Mip: {:3.2f} Light: {:3.2f}", voxelization_time, compute_radiance_time, radiance_mip_time, default_lit_time);
         
         device.waitIdle();
@@ -1075,8 +1076,8 @@ bool Renderer::initialize_render_passes() {
         .set_name("default_lit")
         .set_pipeline(&pp_default_lit)
         .set_rendering_extent(RenderPassRenderingExtent{
-            .viewport = {0.0f, 0.0f, 1920.0f, 1080.0f, 0.0f, 1.0f},
-            .scissor = {0, 0, 1920, 1080}
+            .viewport = {0.0f, 0.0f, 1024.0f, 768.0f, 0.0f, 1.0f},
+            .scissor = {0, 0, 1024, 768}
         })
         .read_from_image(RPResource{
             res_voxel_radiance, 
@@ -1101,6 +1102,37 @@ bool Renderer::initialize_render_passes() {
             }
         });
     render_graph->add_render_pass(pass_default_lit);
+
+    // RenderPass pass_presentation;
+    // pass_presentation
+    //     .set_name("presentation")
+    //     .set_rendering_extent(RenderPassRenderingExtent{
+    //         .viewport = {0.0f, 0.0f, 1024.0f, 768.0f, 0.0f, 1.0f},
+    //         .scissor = {0, 0, 1024, 768}
+    //     })
+    //     .read_from_image(RPResource{
+    //         res_voxel_radiance, 
+    //         RGSyncStage::Fragment,
+    //         TextureInfo{
+    //             .required_layout = RGImageLayout::General,
+    //             .range = {0, voxel_radiance.storage->mips, 0, 1}
+    //         }
+    //     })
+    //     .write_color_attachment(RPResource{
+    //         res_color_attachment,
+    //         RGSyncStage::ColorAttachmentOutput,
+    //         TextureInfo{
+    //             .required_layout = RGImageLayout::Attachment
+    //         }
+    //     })
+    //     .write_depth_attachment(RPResource{
+    //         res_depth_attachment,
+    //         RGSyncStage::EarlyFragment,
+    //         TextureInfo{
+    //             .required_layout = RGImageLayout::Attachment
+    //         }
+    //     });
+    // render_graph->add_render_pass(pass_presentation);
 
     render_graph->bake_graph();
 

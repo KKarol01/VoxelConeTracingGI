@@ -79,7 +79,7 @@ struct TextureRange {
         };
     }
     
-    uint32_t base_mip{0}, mips{1}, base_layer{0}, layers{1};
+    u32 base_mip{0}, mips{1}, base_layer{0}, layers{1};
 };
 
 struct TextureInfo {
@@ -97,11 +97,20 @@ struct RGTextureAccess {
     TextureRange range;
 };
 
+/*
+    Represents a single access to a texture
+*/
 struct RGLayoutAccess {
     u32 access_idx;
     bool is_read;
 };
 
+/*
+    Represents a range of texture MIPs and LAYERs, but with
+    the ability to subtract other ranges from it.
+    It's purpose is to provide every range in which a texture
+    has not been accessed.
+*/
 struct RGLayoutRanges {
     bool empty() const { return ranges.empty(); }
 
@@ -115,26 +124,49 @@ struct RGLayoutRanges {
             handle_subdivision(range, r, new_ranges);
         }   
 
+        new_ranges.shrink_to_fit();
         ranges = std::move(new_ranges);
     }
 
+
+
     void handle_subdivision(TextureRange range, TextureRange r, std::vector<TextureRange>& new_ranges) {
+        /*
+            During range subtraction, there are multiple cases. 
+            Let [] denote a range which the intersection with another range, (), 
+            will be subtracted from.
+
+            Each range is a continous range of layers, that each have equal number of mips.
+            Case 1: ( [ ) ] - range () overlaps with only the left part of the range [] -> divide into ()[]
+            Case 2: [ ( ] ) - range () ovelaps with only the right part of the range [] -> divide into []()
+            Case 3: [ ( ) ] - range () is contained within range [] -> divide into ()[]()
+            Case 4: [( )] -> range () spans exactly the same range of layers as the range [] -> divide by mip regions.
+
+            Additionaly, range () can overlap different part of mips in the range []. In all cases,
+            a small region of only mips can be either above or below the range ().
+        */
+
         const auto overlap = range.get_overlap(r);
 
         if(range.base_layer <= r.base_layer && range.base_layer + range.layers < r.base_layer + r.layers) {
+            // Case 1
             handle_mips(overlap, r, new_ranges);
             r.layers = r.base_layer + r.layers - (overlap.base_layer + overlap.layers);
             r.base_layer = overlap.base_layer + overlap.layers;
         } else if(range.base_layer > r.base_layer && range.base_layer + range.layers <= r.base_layer + r.layers) {
+            // Case 2
             handle_mips(overlap, r, new_ranges);
             r.layers = overlap.base_layer;
         } else if(range.base_layer > r.base_layer && range.base_layer + range.layers < r.base_layer + r.layers) {
+            // Case 3
+            handle_mips(overlap, r, new_ranges);
             auto right = r;
             right.layers = right.base_layer + right.layers - (overlap.base_layer + overlap.layers);
             right.base_layer = overlap.base_layer + overlap.layers;
             new_ranges.push_back(right);
             r.layers = overlap.base_layer;
         } else if(range.base_layer == r.base_layer && range.layers == r.layers) {
+            // Case 4
             handle_mips(overlap, r, new_ranges);
             return;
         } else {
@@ -167,46 +199,12 @@ struct RGLayoutChangeQuery {
     RGLayoutRanges previously_unaccessed;
 };
 
+/*
+    Represents the history of accesses to a texture resource.
+    Latest ones are at the end of the vectors.
+*/
 class RGTextureAccesses {
 public:
-    const RGTextureAccess* find_intersection_in_reads(TextureRange range) const {
-        for(auto it = last_read.rbegin(); it != last_read.rend(); ++it) {
-            if(it->range.intersects(range)) { return &*it; }
-        }
-        return nullptr;
-    }
-
-    const RGTextureAccess* find_intersection_in_writes(TextureRange range) const {
-        for(auto it = last_written.rbegin(); it != last_written.rend(); ++it) {
-            if(it->range.intersects(range)) { return &*it; }
-        }
-        return nullptr;
-    }
-
-    std::vector<RGLayoutAccess> get_overlaping_not_matching_layouts(TextureRange range, RGImageLayout layout) const {
-        std::vector<RGLayoutAccess> accesses;
-        accesses.reserve(layouts.size());
-
-        for(const auto& l : layouts) {
-            auto& acc = get_layout_texture_access(l);
-            if(acc.layout == layout) { continue; }
-            if(!acc.range.intersects(range)) { continue; }
-            accesses.push_back(l);
-        }
-
-        accesses.shrink_to_fit();
-        return accesses;
-    } 
-
-    bool needs_transition(TextureRange range, RGImageLayout layout) const {
-        for(const auto& l : layouts) {
-            auto& acc = get_layout_texture_access(l);
-            if(acc.layout != layout) { continue; }
-            if(acc.range.fully_contains(range)) { return false; }
-        }
-        return true;
-    }
-
     void insert_read(RGTextureAccess access) {
         layouts.emplace_back(last_read.size(), true);
         last_read.push_back(access);
@@ -234,7 +232,6 @@ public:
         for(auto it = layouts.rbegin(); it != layouts.rend(); ++it) {
             auto& access = *it;
             auto& txt_access = access.is_read ? last_read.at(access.access_idx) : last_written.at(access.access_idx);
-            // if(is_read && access.is_read) { continue;}
             if(auto overlap = txt_access.range.get_overlap(range); overlap.mips * overlap.layers != 0u) {
                 if(std::find_if(begin(query.accesses), end(query.accesses), [&overlap](auto& e) { return e.second.fully_contains(overlap); }) == end(query.accesses)) {
                     query.accesses.emplace_back(access, overlap);
