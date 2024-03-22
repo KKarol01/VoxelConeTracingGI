@@ -48,6 +48,37 @@ enum class RGImageLayout {
 };
 
 struct TextureRange {
+    bool intersects(TextureRange r) const {
+        return (
+            base_layer < r.base_layer + r.layers &&
+            base_layer + layers > r.base_layer &&
+            base_mip < r.base_mip + r.mips &&
+            base_mip + mips > r.base_mip
+        );
+    }
+
+    bool fully_contains(TextureRange r) const {
+        return (
+            base_mip <= r.base_mip &&
+            base_mip + mips >= r.base_mip + r.mips &&
+            base_layer <= r.base_layer &&
+            base_layer + layers >= r.base_layer + r.layers
+        );
+    }
+    
+    TextureRange get_overlap(TextureRange r) const {
+        const auto a = std::max(base_mip, r.base_mip);
+        const auto b = std::max(base_layer, r.base_layer);
+        const auto x = std::min(base_mip+mips, r.base_mip+r.mips);
+        const auto y = std::min(base_layer+layers, r.base_layer+r.layers);
+        return TextureRange{
+            .base_mip = a,
+            .mips = x - std::min(x, a),
+            .base_layer = b,
+            .layers = y - std::min(y, b)
+        };
+    }
+    
     uint32_t base_mip{0}, mips{1}, base_layer{0}, layers{1};
 };
 
@@ -58,62 +89,203 @@ struct TextureInfo {
 
 struct RenderPass;
 struct RGTextureAccess {
-    bool intersects(TextureRange r) const {
-        return (
-            range.base_mip < r.base_mip + r.mips &&
-            range.base_mip + range.mips > r.base_mip &&
-            range.base_layer < r.base_layer + r.layers &&
-            range.base_layer + range.layers > r.base_layer
-        );
-    }
-
+    RGTextureAccess(RenderPass* pass, RGImageLayout layout, TextureRange range)
+        : pass(pass), layout(layout), range(range) {}
+    
     RenderPass* pass{};
     RGImageLayout layout{RGImageLayout::Undefined};
     TextureRange range;
 };
 
-struct RGTextureAccesses {
+struct RGLayoutAccess {
+    u32 access_idx;
+    bool is_read;
+};
 
+struct RGLayoutRanges {
+    bool empty() const { return ranges.empty(); }
+
+    void subtract(TextureRange range) {
+        std::vector<TextureRange> new_ranges;
+        new_ranges.reserve(ranges.size());
+
+        for(auto& r : ranges) {
+            if(!range.intersects(r)) { new_ranges.push_back(r); continue; }
+            if(range.fully_contains(r)) { continue; }
+            handle_subdivision(range, r, new_ranges);
+        }   
+
+        ranges = std::move(new_ranges);
+    }
+
+    void handle_subdivision(TextureRange range, TextureRange r, std::vector<TextureRange>& new_ranges) {
+        const auto overlap = range.get_overlap(r);
+
+        if(range.base_layer <= r.base_layer && range.base_layer + range.layers < r.base_layer + r.layers) {
+            handle_mips(overlap, r, new_ranges);
+            r.layers = r.base_layer + r.layers - (overlap.base_layer + overlap.layers);
+            r.base_layer = overlap.base_layer + overlap.layers;
+        } else if(range.base_layer > r.base_layer && range.base_layer + range.layers <= r.base_layer + r.layers) {
+            handle_mips(overlap, r, new_ranges);
+            r.layers = overlap.base_layer;
+        } else if(range.base_layer > r.base_layer && range.base_layer + range.layers < r.base_layer + r.layers) {
+            auto right = r;
+            right.layers = right.base_layer + right.layers - (overlap.base_layer + overlap.layers);
+            right.base_layer = overlap.base_layer + overlap.layers;
+            new_ranges.push_back(right);
+            r.layers = overlap.base_layer;
+        } else if(range.base_layer == r.base_layer && range.layers == r.layers) {
+            handle_mips(overlap, r, new_ranges);
+            return;
+        } else {
+            spdlog::error("No more cases to cover. This is an error.");
+            std::abort();
+        }
+
+        new_ranges.push_back(r);
+    }
+
+    void handle_mips(TextureRange overlap, TextureRange r, std::vector<TextureRange>& new_ranges) {
+        r.base_layer = overlap.base_layer;
+        r.layers = overlap.layers;
+        if(r.base_mip < overlap.base_mip) {
+            r.mips = overlap.base_mip;
+        } else if(r.base_mip > overlap.base_mip) {
+            r.mips = r.base_mip + r.mips - (overlap.base_mip + overlap.mips);
+            r.base_mip = overlap.base_mip + overlap.mips;
+        } else {
+            return;
+        }
+        new_ranges.push_back(r);
+    }
+    
+    std::vector<TextureRange> ranges;
+};
+
+struct RGLayoutChangeQuery {
+    std::vector<std::pair<RGLayoutAccess, TextureRange>> accesses;
+    RGLayoutRanges previously_unaccessed;
+};
+
+class RGTextureAccesses {
+public:
     const RGTextureAccess* find_intersection_in_reads(TextureRange range) const {
-        for(const auto& e : last_read) {
-            if(e.intersects(range)) { return &e; }
+        for(auto it = last_read.rbegin(); it != last_read.rend(); ++it) {
+            if(it->range.intersects(range)) { return &*it; }
         }
         return nullptr;
     }
 
     const RGTextureAccess* find_intersection_in_writes(TextureRange range) const {
-        for(const auto& e : last_written) {
-            if(e.intersects(range)) { return &e; }
+        for(auto it = last_written.rbegin(); it != last_written.rend(); ++it) {
+            if(it->range.intersects(range)) { return &*it; }
         }
         return nullptr;
     }
 
+    std::vector<RGLayoutAccess> get_overlaping_not_matching_layouts(TextureRange range, RGImageLayout layout) const {
+        std::vector<RGLayoutAccess> accesses;
+        accesses.reserve(layouts.size());
+
+        for(const auto& l : layouts) {
+            auto& acc = get_layout_texture_access(l);
+            if(acc.layout == layout) { continue; }
+            if(!acc.range.intersects(range)) { continue; }
+            accesses.push_back(l);
+        }
+
+        accesses.shrink_to_fit();
+        return accesses;
+    } 
+
+    bool needs_transition(TextureRange range, RGImageLayout layout) const {
+        for(const auto& l : layouts) {
+            auto& acc = get_layout_texture_access(l);
+            if(acc.layout != layout) { continue; }
+            if(acc.range.fully_contains(range)) { return false; }
+        }
+        return true;
+    }
+
+    void insert_read(RGTextureAccess access) {
+        layouts.emplace_back(last_read.size(), true);
+        last_read.push_back(access);
+    }
+
+    void insert_write(RGTextureAccess access) {
+        layouts.emplace_back(last_written.size(), false);
+        last_written.push_back(access);
+    }
+
+    RGTextureAccess& get_layout_texture_access(RGLayoutAccess access) {
+        auto* vec = &last_read;
+        if(!access.is_read) { vec = &last_written; }
+        return vec->at(access.access_idx);
+    }
+    const RGTextureAccess& get_layout_texture_access(RGLayoutAccess access) const {
+        auto* vec = &last_read;
+        if(!access.is_read) { vec = &last_written; }
+        return vec->at(access.access_idx);
+    }
+
+    RGLayoutChangeQuery query_layout_changes(TextureRange range, bool is_read) const {
+        RGLayoutChangeQuery query;
+        query.previously_unaccessed.ranges.push_back(range);
+        for(auto it = layouts.rbegin(); it != layouts.rend(); ++it) {
+            auto& access = *it;
+            auto& txt_access = access.is_read ? last_read.at(access.access_idx) : last_written.at(access.access_idx);
+            // if(is_read && access.is_read) { continue;}
+            if(auto overlap = txt_access.range.get_overlap(range); overlap.mips * overlap.layers != 0u) {
+                if(std::find_if(begin(query.accesses), end(query.accesses), [&overlap](auto& e) { return e.second.fully_contains(overlap); }) == end(query.accesses)) {
+                    query.accesses.emplace_back(access, overlap);
+                    query.previously_unaccessed.subtract(overlap);
+                }
+            }
+
+            if(query.previously_unaccessed.empty()) { break; }
+        }
+
+        return query;
+    }
+
+private:
     std::vector<RGTextureAccess> last_read, last_written;
+    std::vector<RGLayoutAccess> layouts;
 };
 
 struct RGResource {
     // RGResource(const std::string& name, Buffer* buffer): name(name), type(RGResourceType::Buffer) {}
-    RGResource(const std::string& name, TextureStorage* texture): name(name), type(RGResourceType::Texture), texture(texture) {}
+    RGResource(const std::string& name, TextureStorage* texture): name(name), type(RGResourceType::Texture), texture(texture), texture_accesses() {}
 
     RGResource(const RGResource& o) noexcept { *this = o; }
     RGResource& operator=(const RGResource& o) noexcept {
-        assert(type == RGResourceType::Texture);
+        assert(o.type == RGResourceType::Texture);
         name = o.name;
         type = o.type;
         texture = o.texture;
+        new(&texture_accesses) RGTextureAccesses{};
         texture_accesses = o.texture_accesses;
         return *this;
     }
     RGResource(RGResource&& o) noexcept { *this = std::move(o); }
     RGResource& operator=(RGResource&& o) noexcept {
-        assert(type == RGResourceType::Texture);
+        assert(o.type == RGResourceType::Texture);
         name = std::move(o.name);
         type = o.type;
         texture = o.texture;
+        new(&texture_accesses) RGTextureAccesses{};
         texture_accesses = std::move(o.texture_accesses);
         return *this;
     }
-    ~RGResource() noexcept {}
+    ~RGResource() noexcept {
+        switch (type) {
+            case RGResourceType::Texture: { texture_accesses.~RGTextureAccesses(); } break;
+            default: {
+                spdlog::error("Unhandled destructor in RGResource");
+                std::abort();
+            }
+        }
+    }
     
     std::string name;
     RGResourceType type{RGResourceType::None};
@@ -178,24 +350,24 @@ struct RenderPass {
 
     RenderPass& read_from_image(RPResource info) {
         info.usage = RGResourceUsage::Image;
-        resources.push_back(info);
         info.is_read = true;
+        resources.push_back(info);
         return *this;
     }
 
     RenderPass& write_color_attachment(RPResource info) {
         info.usage = RGResourceUsage::ColorAttachment;
+        info.is_read = false;
         resources.push_back(info);
         color_attachments.push_back(resources.size() - 1);
-        info.is_read = false;
         return *this;
     }
 
     RenderPass& write_depth_attachment(RPResource info) {
         info.usage = RGResourceUsage::DepthAttachment;
+        info.is_read = false;
         resources.push_back(info);
         depth_attachment = resources.size() - 1;
-        info.is_read = false;
         return *this;
     }
 
@@ -207,6 +379,13 @@ struct RenderPass {
     RenderPass& set_pipeline(Pipeline* pipeline) {
         this->pipeline = pipeline;
         return *this;
+    }
+
+    const RPResource* get_resource(RgResourceHandle handle) const {
+        for(auto& r : resources) {
+            if(r.resource == handle) { return &r; }
+        }
+        return nullptr;
     }
     
     std::string name;
