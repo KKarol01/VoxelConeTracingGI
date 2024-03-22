@@ -221,21 +221,6 @@ void RenderGraph::bake_graph() {
             to_vk_subresource_range(range, dst_resource.usage == RGResourceUsage::DepthAttachment ? RGImageAspect::Depth : RGImageAspect::Color)
         };
 
-        spdlog::debug("({}) {}-{} [{} {}] -> [{} {}] {}->{} [{}:{} {}:{}]",
-            stage,
-            src_pass ? src_pass->name : "",
-            dst_pass ? dst_pass->name : "",
-            vk::to_string(barrier.srcStageMask), 
-            vk::to_string(barrier.srcAccessMask), 
-            vk::to_string(barrier.dstStageMask), 
-            vk::to_string(barrier.dstAccessMask), 
-            vk::to_string(barrier.oldLayout), 
-            vk::to_string(barrier.newLayout), 
-            barrier.subresourceRange.baseMipLevel, 
-            barrier.subresourceRange.levelCount, 
-            barrier.subresourceRange.baseArrayLayer, 
-            barrier.subresourceRange.layerCount);
-
         if(graph_resource.texture) {
             deps.image_barriers.push_back(barrier);
         } else {
