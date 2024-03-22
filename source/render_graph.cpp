@@ -114,16 +114,6 @@ void RenderGraph::create_rendering_resources() {
 }
 
 RenderGraph::BarrierStages RenderGraph::deduce_stages_and_accesses(const RenderPass* src_pass, const RenderPass* dst_pass, const RPResource& src_resource, const RPResource& dst_resource, bool src_read, bool dst_read) const {
-    // if(src_read && dst_read) {
-    //     spdlog::info("Detected trying to insert barrier with read-after-read - this is not neccessary.");
-    //     return BarrierStages{
-    //         .src_stage = vk::PipelineStageFlagBits2::eNone,
-    //         .dst_stage = vk::PipelineStageFlagBits2::eNone,
-    //         .src_access = vk::AccessFlagBits2::eNone,
-    //         .dst_access = vk::AccessFlagBits2::eNone,
-    //     };
-    // }
-
     const auto get_access = [&](RGSyncStage stage, const RPResource& resource, bool read) {
         switch (stage) {
             case RGSyncStage::Transfer: {
@@ -203,7 +193,7 @@ void RenderGraph::bake_graph() {
         stage_dependencies.resize(std::max(stage_dependencies.size(), idx+1));
         return stage_dependencies.at(idx);
     };
-    const auto insert_barrier = [&](u32 stage, const RenderPass* src_pass, const RenderPass* dst_pass, const RPResource& src_resource, const RPResource& dst_resource, RGImageLayout old_layout, RGImageLayout new_layout, bool src_read, bool dst_read, TextureRange range) {
+    const auto insert_barrier = [&](u32 stage, const RenderPass* src_pass, const RenderPass* dst_pass, const RPResource& src_resource, const RPResource& dst_resource, vk::ImageLayout old_layout, vk::ImageLayout new_layout, bool src_read, bool dst_read, TextureRange range) {
         auto& deps = get_stage_dependencies(stage);
         const auto stages = deduce_stages_and_accesses(src_pass, dst_pass, src_resource, dst_resource, src_read, dst_read);
         auto& graph_resource = resources.at(dst_resource.resource);
@@ -213,8 +203,8 @@ void RenderGraph::bake_graph() {
             stages.src_access,
             stages.dst_stage,
             stages.dst_access,
-            to_vk_layout(old_layout),
-            to_vk_layout(new_layout),
+            old_layout,
+            new_layout,
             vk::QueueFamilyIgnored,
             vk::QueueFamilyIgnored,
             graph_resource.texture ? graph_resource.texture->image : vk::Image{},
@@ -247,15 +237,13 @@ void RenderGraph::bake_graph() {
                         const auto barrier_stage = pass_stage.at(texture_access.pass) + 1u;    
                         stage = std::max(stage, barrier_stage);
                         const auto& src_resource = *texture_access.pass->get_resource(pass_resource.resource);
-                        insert_barrier(barrier_stage, texture_access.pass, &pass, src_resource, pass_resource, texture_access.layout, pass_resource.texture_info.required_layout, layout_access.is_read, is_read, overlap);
+                        insert_barrier(barrier_stage, texture_access.pass, &pass, src_resource, pass_resource, to_vk_layout(texture_access.layout), to_vk_layout(pass_resource.texture_info.required_layout), layout_access.is_read, is_read, overlap);
                     }
                     for(const auto& r : query.previously_unaccessed.ranges) {
-                        insert_barrier(0, nullptr, &pass, pass_resource, pass_resource, RGImageLayout::Undefined, pass_resource.texture_info.required_layout, false, is_read, r);
+                        vk::ImageLayout old_layout{vk::ImageLayout::eUndefined};
+                        if(graph_resource.texture) { old_layout = graph_resource.texture->current_layout; }
+                        insert_barrier(0, nullptr, &pass, pass_resource, pass_resource, old_layout, to_vk_layout(pass_resource.texture_info.required_layout), false, is_read, r);
                     }
-
-
-                    int x= 1;
-                    x=+x;
                 } break;
                 default: {
                     spdlog::error("Unrecognized pass resource usage {}", (u32)pass_resource.usage);
