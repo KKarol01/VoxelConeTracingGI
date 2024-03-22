@@ -333,7 +333,7 @@ struct RenderPass {
         return *this;
     }
     
-    RenderPass& set_draw_func(std::function<void()>&& f) {
+    RenderPass& set_draw_func(std::function<void(vk::CommandBuffer)>&& f) {
         func = std::move(f);
         return *this;
     }
@@ -387,7 +387,7 @@ struct RenderPass {
     
     std::string name;
     Pipeline* pipeline{};
-    std::function<void()> func;
+    std::function<void(vk::CommandBuffer)> func;
     RenderPassRenderingExtent extent;
     std::vector<RPResource> resources;
     std::vector<u32> color_attachments; 

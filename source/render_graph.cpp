@@ -85,6 +85,17 @@ static vk::AttachmentStoreOp to_vk_store_op(RGAttachmentLoadStoreOp op) {
     }
 }
 
+static vk::PipelineBindPoint to_vk_bind_point(PipelineType type) { 
+    switch (type) {
+        case PipelineType::Compute: { return vk::PipelineBindPoint::eCompute; }
+        case PipelineType::Graphics: { return vk::PipelineBindPoint::eGraphics; }
+        default: {
+            spdlog::error("Unrecognized PipelineType {}", (u32)type);
+            std::abort();
+        } 
+    }
+}
+
 void RenderGraph::create_rendering_resources() {
     auto* renderer = get_context().renderer;
 
@@ -354,6 +365,7 @@ void RenderGraph::render(vk::CommandBuffer cmd, vk::Image swapchain_image, vk::I
             spdlog::debug("{}", pass.name);
 
             if(pass.pipeline) {
+                cmd.bindPipeline(to_vk_bind_point(pass.pipeline->type), pass.pipeline->pipeline);
                 if(pass.pipeline->type == PipelineType::Graphics) {
                     std::vector<vk::RenderingAttachmentInfo> color_attachments;
                     color_attachments.reserve(pass.color_attachments.size());
@@ -429,7 +441,7 @@ void RenderGraph::render(vk::CommandBuffer cmd, vk::Image swapchain_image, vk::I
                     });
                 }
 
-                if(pass.func) { pass.func(); }
+                if(pass.func) { pass.func(cmd); }
 
                 if(pass.pipeline->type == PipelineType::Graphics) {
                     cmd.endRendering();

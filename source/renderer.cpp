@@ -985,6 +985,10 @@ bool Renderer::initialize_render_passes() {
                     .required_layout = RGImageLayout::TransferDst,
                     .range = {0, vk::RemainingMipLevels, 0, vk::RemainingArrayLayers}
                 }
+            })
+            .set_draw_func([rg = render_graph, resource](vk::CommandBuffer cmd) {
+                const auto& r = rg->get_resource(resource);
+                cmd.clearColorImage(r.texture->image, vk::ImageLayout::eTransferDstOptimal, vk::ClearColorValue{0.0f, 0.0f, 0.0f, 0.0f}, vk::ImageSubresourceRange{vk::ImageAspectFlagBits::eColor, 0, vk::RemainingMipLevels, 0, vk::RemainingArrayLayers});
             });
         return pass_clear;
     };
@@ -1013,6 +1017,15 @@ bool Renderer::initialize_render_passes() {
             RGSyncStage::Fragment,
             TextureInfo{
                 .required_layout = RGImageLayout::General,
+            }
+        })
+        .set_draw_func([this](vk::CommandBuffer cmd) {
+            vk::DescriptorSet sets[] {global_set.set, voxelize_set.set, material_set.set};
+            cmd.bindVertexBuffers(0, scene.vertex_buffer->buffer, 0ull);
+            cmd.bindIndexBuffer(scene.index_buffer->buffer, 0, vk::IndexType::eUint32);
+            cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, pp_voxelize.layout.layout, 0, sets, {});
+            for(auto& gpum : scene.models) {
+                cmd.drawIndexed(gpum.index_count, 1, gpum.index_offset, gpum.vertex_offset, 0);
             }
         });
     render_graph->add_render_pass(pass_voxelization);
