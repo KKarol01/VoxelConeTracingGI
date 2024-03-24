@@ -16,6 +16,7 @@ static vk::PipelineStageFlags2 to_vk_pipeline_stage(RGSyncStage stage) {
         case LateFragment:  { return vk::PipelineStageFlagBits2::eLateFragmentTests; }
         case Compute:       { return vk::PipelineStageFlagBits2::eComputeShader; }
         case ColorAttachmentOutput: { return vk::PipelineStageFlagBits2::eColorAttachmentOutput; }
+        case AllGraphics: { return vk::PipelineStageFlagBits2::eAllGraphics; }
         default: {
             spdlog::error("Unrecognized RGSyncStage {}", (u32)stage);
             std::abort();
@@ -53,6 +54,7 @@ static vk::ImageLayout to_vk_layout(RGImageLayout layout) {
         case RGImageLayout::ReadOnly: { return vk::ImageLayout::eShaderReadOnlyOptimal; }
         case RGImageLayout::TransferSrc: { return vk::ImageLayout::eTransferSrcOptimal; }
         case RGImageLayout::TransferDst: { return vk::ImageLayout::eTransferDstOptimal; }
+        case RGImageLayout::PresentSrc: { return vk::ImageLayout::ePresentSrcKHR; }
         case RGImageLayout::Undefined: { return vk::ImageLayout::eUndefined; }
         default: {
             spdlog::error("Unrecognized RGImageLayout: {}", (u32)layout);
@@ -140,39 +142,46 @@ RenderGraph::BarrierStages RenderGraph::deduce_stages_and_accesses(const RenderP
                 if(read) { return vk::AccessFlagBits2::eColorAttachmentRead; }   
                 else     { return vk::AccessFlagBits2::eColorAttachmentWrite; }   
             }
+            case RGSyncStage::AllGraphics:
             case RGSyncStage::Compute:
             case RGSyncStage::Fragment: {
-                if(resource.usage == RGResourceUsage::Image) {
-                    auto& rg_resource = resources.at(resource.resource);
-                    const DescriptorBinding* binding = nullptr;
-                    if(src_pass && src_pass->pipeline) {
-                        binding = src_pass->pipeline->layout.find_binding(rg_resource.name);
-                    }
-                    if(!binding && dst_pass && dst_pass->pipeline) {
-                        binding = dst_pass->pipeline->layout.find_binding(rg_resource.name);
-                    }
-                    if(!binding) {
-                        spdlog::error("Trying to synchronize image resource {} that is not found in both passes' layouts {} {}", rg_resource.name, src_pass->name, dst_pass->name);
-                        std::abort();
-                    }
-
-                    if(binding->type == DescriptorType::StorageImage) {
-                        if(read)    { return vk::AccessFlagBits2::eShaderStorageRead; }
-                        else        { return vk::AccessFlagBits2::eShaderStorageWrite; }
-                    } else if(binding->type == DescriptorType::SampledImage) {
-                        if(read)    { return vk::AccessFlagBits2::eShaderSampledRead; }
-                        else {
-                            spdlog::error("You cannot write to a sampled image.");
+                switch(resource.usage) {
+                    case RGResourceUsage::Image: {
+                        auto& rg_resource = resources.at(resource.resource);
+                        const DescriptorBinding* binding = nullptr;
+                        if(src_pass && src_pass->pipeline) {
+                            binding = src_pass->pipeline->layout.find_binding(rg_resource.name);
+                        }
+                        if(!binding && dst_pass && dst_pass->pipeline) {
+                            binding = dst_pass->pipeline->layout.find_binding(rg_resource.name);
+                        }
+                        if(!binding) {
+                            spdlog::error("Trying to synchronize image resource {} that is not found in both passes' layouts {} {}", rg_resource.name, src_pass->name, dst_pass->name);
                             std::abort();
                         }
-                    } else {
-                        spdlog::error("Unrecognized binding type {} for Image resource {} in stages {} {}", (u32)binding->type, rg_resource.name, src_pass->name, dst_pass->name);
+
+                        if(binding->type == DescriptorType::StorageImage) {
+                            if(read)    { return vk::AccessFlagBits2::eShaderStorageRead; }
+                            else        { return vk::AccessFlagBits2::eShaderStorageWrite; }
+                        } else if(binding->type == DescriptorType::SampledImage) {
+                            if(read)    { return vk::AccessFlagBits2::eShaderSampledRead; }
+                            else {
+                                spdlog::error("You cannot write to a sampled image.");
+                                std::abort();
+                            }
+                        } else {
+                            spdlog::error("Unrecognized binding type {} for Image resource {} in stages {} {}", (u32)binding->type, rg_resource.name, src_pass->name, dst_pass->name);
+                            std::abort();
+                        }
+                    }
+                    case RGResourceUsage::ColorAttachment: { 
+                        return read ? vk::AccessFlagBits2::eColorAttachmentRead : vk::AccessFlagBits2::eColorAttachmentWrite;
+                    }
+                    default: {
+                        spdlog::error("Unsupported resource usage");
                         std::abort();
                     }
-                } else {
-                    spdlog::error("Compute/Fragment stage NonImage barrier access deduction not implemented");
-                    std::abort();
-                }
+                }   
             }
             default: {
                 spdlog::error("Unrecognized RGSyncStage {}", (u32)stage);

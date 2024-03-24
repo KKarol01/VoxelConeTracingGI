@@ -468,22 +468,24 @@ void Renderer::draw() {
         // cmd.endRendering();
 
 
+        cmd.bindVertexBuffers(0, scene.vertex_buffer->buffer, 0ull);
+        cmd.bindIndexBuffer(scene.index_buffer->buffer, 0, vk::IndexType::eUint32);
         render_graph->render(cmd, swapchain_images.at(img), swapchain_views.at(img));
-        cmd.pipelineBarrier(
-            vk::PipelineStageFlagBits::eColorAttachmentOutput,
-            vk::PipelineStageFlagBits::eBottomOfPipe,
-            {}, {}, {},
-            vk::ImageMemoryBarrier{
-                vk::AccessFlagBits::eColorAttachmentWrite,
-                vk::AccessFlagBits::eNone,
-                vk::ImageLayout::eColorAttachmentOptimal,
-                vk::ImageLayout::ePresentSrcKHR,
-                {},
-                {},
-                swapchain_images.at(img),
-                {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1}
-            }
-        );
+        // cmd.pipelineBarrier(
+        //     vk::PipelineStageFlagBits::eColorAttachmentOutput,
+        //     vk::PipelineStageFlagBits::eBottomOfPipe,
+        //     {}, {}, {},
+        //     vk::ImageMemoryBarrier{
+        //         vk::AccessFlagBits::eColorAttachmentWrite,
+        //         vk::AccessFlagBits::eNone,
+        //         vk::ImageLayout::eColorAttachmentOptimal,
+        //         vk::ImageLayout::ePresentSrcKHR,
+        //         {},
+        //         {},
+        //         swapchain_images.at(img),
+        //         {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1}
+        //     }
+        // );
 
         cmd.end();
         vk::PipelineStageFlags wait_masks[] {
@@ -1021,8 +1023,6 @@ bool Renderer::initialize_render_passes() {
         })
         .set_draw_func([this](vk::CommandBuffer cmd) {
             vk::DescriptorSet sets[] {global_set.set, voxelize_set.set, material_set.set};
-            cmd.bindVertexBuffers(0, scene.vertex_buffer->buffer, 0ull);
-            cmd.bindIndexBuffer(scene.index_buffer->buffer, 0, vk::IndexType::eUint32);
             cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, pp_voxelize.layout.layout, 0, sets, {});
             for(auto& gpum : scene.models) {
                 cmd.drawIndexed(gpum.index_count, 1, gpum.index_offset, gpum.vertex_offset, 0);
@@ -1116,36 +1116,17 @@ bool Renderer::initialize_render_passes() {
         });
     render_graph->add_render_pass(pass_default_lit);
 
-    // RenderPass pass_presentation;
-    // pass_presentation
-    //     .set_name("presentation")
-    //     .set_rendering_extent(RenderPassRenderingExtent{
-    //         .viewport = {0.0f, 0.0f, 1024.0f, 768.0f, 0.0f, 1.0f},
-    //         .scissor = {0, 0, 1024, 768}
-    //     })
-    //     .read_from_image(RPResource{
-    //         res_voxel_radiance, 
-    //         RGSyncStage::Fragment,
-    //         TextureInfo{
-    //             .required_layout = RGImageLayout::General,
-    //             .range = {0, voxel_radiance.storage->mips, 0, 1}
-    //         }
-    //     })
-    //     .write_color_attachment(RPResource{
-    //         res_color_attachment,
-    //         RGSyncStage::ColorAttachmentOutput,
-    //         TextureInfo{
-    //             .required_layout = RGImageLayout::Attachment
-    //         }
-    //     })
-    //     .write_depth_attachment(RPResource{
-    //         res_depth_attachment,
-    //         RGSyncStage::EarlyFragment,
-    //         TextureInfo{
-    //             .required_layout = RGImageLayout::Attachment
-    //         }
-    //     });
-    // render_graph->add_render_pass(pass_presentation);
+    RenderPass pass_presentation;
+    pass_presentation
+        .set_name("presentation")
+        .read_color_attachment(RPResource{
+            res_color_attachment,
+            RGSyncStage::AllGraphics,
+            TextureInfo{
+                .required_layout = RGImageLayout::PresentSrc
+            }
+        });
+    render_graph->add_render_pass(pass_presentation);
 
     render_graph->bake_graph();
 

@@ -28,6 +28,7 @@ target_compile_definitions(vxgi
     PRIVATE
         _CRT_SECURE_NO_WARNINGS
         WIN32_LEAN_AND_MEAN
+        VC_EXTRALEAN
         NOMINMAX
         VULKAN_HPP_DISPATCH_LOADER_DYNAMIC=1
 )

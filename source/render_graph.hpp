@@ -36,7 +36,7 @@ using RgResourceHandle = uint64_t;
 
 enum class RGSyncStage {
     None, Transfer, Fragment, EarlyFragment, LateFragment, Compute, 
-    ColorAttachmentOutput
+    ColorAttachmentOutput, AllGraphics
 };
 
 struct BufferInfo {
@@ -44,7 +44,7 @@ struct BufferInfo {
 
 enum class RGImageLayout {
     Undefined, General, Attachment, ReadOnly,
-    TransferDst, TransferSrc
+    TransferDst, TransferSrc, PresentSrc
 };
 
 struct TextureRange {
@@ -355,6 +355,14 @@ struct RenderPass {
     RenderPass& write_color_attachment(RPResource info) {
         info.usage = RGResourceUsage::ColorAttachment;
         info.is_read = false;
+        resources.push_back(info);
+        color_attachments.push_back(resources.size() - 1);
+        return *this;
+    }
+
+    RenderPass& read_color_attachment(RPResource info) {
+        info.usage = RGResourceUsage::ColorAttachment;
+        info.is_read = true;
         resources.push_back(info);
         color_attachments.push_back(resources.size() - 1);
         return *this;
