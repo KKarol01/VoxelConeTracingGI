@@ -70,7 +70,7 @@ The demo can be downloaded in the Releases section.
 # To-do
 - [ ] Anisotropic voxels
 - [ ] Swapchain resizing
-- [ ] Render graph for layout transitions and cache invalidations and flushes
+- [x] Render graph for layout transitions and cache invalidations and flushes
 - [ ] Deletion queue
 - [ ] Proper materials
 - [ ] Scene graph
