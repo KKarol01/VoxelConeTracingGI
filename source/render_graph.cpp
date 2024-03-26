@@ -6,17 +6,16 @@
 #include <vulkan/vulkan_structs.hpp>
 #include <vulkan/vulkan_to_string.hpp>
 
-static vk::PipelineStageFlags2 to_vk_pipeline_stage(RGSyncStage stage) {
+static constexpr vk::PipelineStageFlags2 to_vk_pipeline_stage(RGSyncStage stage) {
     switch (stage) {
-        using enum RGSyncStage;
-        case None:          { return vk::PipelineStageFlagBits2::eNone; }
-        case Transfer:      { return vk::PipelineStageFlagBits2::eTransfer; }
-        case Fragment:      { return vk::PipelineStageFlagBits2::eFragmentShader; }
-        case EarlyFragment: { return vk::PipelineStageFlagBits2::eEarlyFragmentTests; }
-        case LateFragment:  { return vk::PipelineStageFlagBits2::eLateFragmentTests; }
-        case Compute:       { return vk::PipelineStageFlagBits2::eComputeShader; }
-        case ColorAttachmentOutput: { return vk::PipelineStageFlagBits2::eColorAttachmentOutput; }
-        case AllGraphics: { return vk::PipelineStageFlagBits2::eAllGraphics; }
+        case RGSyncStage::None:          { return vk::PipelineStageFlagBits2::eNone; }
+        case RGSyncStage::Transfer:      { return vk::PipelineStageFlagBits2::eTransfer; }
+        case RGSyncStage::Fragment:      { return vk::PipelineStageFlagBits2::eFragmentShader; }
+        case RGSyncStage::EarlyFragment: { return vk::PipelineStageFlagBits2::eEarlyFragmentTests; }
+        case RGSyncStage::LateFragment:  { return vk::PipelineStageFlagBits2::eLateFragmentTests; }
+        case RGSyncStage::Compute:       { return vk::PipelineStageFlagBits2::eComputeShader; }
+        case RGSyncStage::ColorAttachmentOutput: { return vk::PipelineStageFlagBits2::eColorAttachmentOutput; }
+        case RGSyncStage::AllGraphics: { return vk::PipelineStageFlagBits2::eAllGraphics; }
         default: {
             spdlog::error("Unrecognized RGSyncStage {}", (u32)stage);
             std::abort();
@@ -24,14 +23,10 @@ static vk::PipelineStageFlags2 to_vk_pipeline_stage(RGSyncStage stage) {
     }
 }
 
-static vk::ImageAspectFlags to_vk_aspect(RGImageAspect aspect) {
+static constexpr vk::ImageAspectFlags to_vk_aspect(RGImageAspect aspect) {
     switch (aspect) {
-        case RGImageAspect::Color: {
-            return vk::ImageAspectFlagBits::eColor;
-        }
-        case RGImageAspect::Depth: {
-            return vk::ImageAspectFlagBits::eDepth;
-        }
+        case RGImageAspect::Color: { return vk::ImageAspectFlagBits::eColor; }
+        case RGImageAspect::Depth: { return vk::ImageAspectFlagBits::eDepth; }
         default: {
             spdlog::error("Unrecognized RgImageAspect: {}", (u32)aspect);
             std::abort();
@@ -39,7 +34,7 @@ static vk::ImageAspectFlags to_vk_aspect(RGImageAspect aspect) {
     }
 }
 
-static vk::ImageSubresourceRange to_vk_subresource_range(TextureRange range, RGImageAspect aspect) {
+static constexpr vk::ImageSubresourceRange to_vk_subresource_range(TextureRange range, RGImageAspect aspect) {
     return vk::ImageSubresourceRange{
         to_vk_aspect(aspect),
         range.base_mip, range.mips,
@@ -47,7 +42,7 @@ static vk::ImageSubresourceRange to_vk_subresource_range(TextureRange range, RGI
     };
 }
 
-static vk::ImageLayout to_vk_layout(RGImageLayout layout) {
+static constexpr vk::ImageLayout to_vk_layout(RGImageLayout layout) {
     switch(layout) {
         case RGImageLayout::Attachment: { return vk::ImageLayout::eAttachmentOptimal; }
         case RGImageLayout::General: { return vk::ImageLayout::eGeneral; }
@@ -63,7 +58,7 @@ static vk::ImageLayout to_vk_layout(RGImageLayout layout) {
     }
 }
 
-static vk::AttachmentLoadOp to_vk_load_op(RGAttachmentLoadStoreOp op) {
+static constexpr vk::AttachmentLoadOp to_vk_load_op(RGAttachmentLoadStoreOp op) {
     switch(op) {
         case RGAttachmentLoadStoreOp::DontCare: { return vk::AttachmentLoadOp::eDontCare; }
         case RGAttachmentLoadStoreOp::Clear: { return vk::AttachmentLoadOp::eClear; }
@@ -75,7 +70,7 @@ static vk::AttachmentLoadOp to_vk_load_op(RGAttachmentLoadStoreOp op) {
     }
 }
 
-static vk::AttachmentStoreOp to_vk_store_op(RGAttachmentLoadStoreOp op) {
+static constexpr vk::AttachmentStoreOp to_vk_store_op(RGAttachmentLoadStoreOp op) {
     switch(op) {
         case RGAttachmentLoadStoreOp::DontCare: { return vk::AttachmentStoreOp::eDontCare; }
         case RGAttachmentLoadStoreOp::Store: { return vk::AttachmentStoreOp::eStore; }
@@ -87,7 +82,7 @@ static vk::AttachmentStoreOp to_vk_store_op(RGAttachmentLoadStoreOp op) {
     }
 }
 
-static vk::PipelineBindPoint to_vk_bind_point(PipelineType type) { 
+static constexpr vk::PipelineBindPoint to_vk_bind_point(PipelineType type) { 
     switch (type) {
         case PipelineType::Compute: { return vk::PipelineBindPoint::eCompute; }
         case PipelineType::Graphics: { return vk::PipelineBindPoint::eGraphics; }
@@ -98,16 +93,48 @@ static vk::PipelineBindPoint to_vk_bind_point(PipelineType type) {
     }
 }
 
+static constexpr vk::ImageViewType vk_img_type_to_vk_img_view_type(vk::ImageType type) {
+    switch(type) {
+        case vk::ImageType::e2D: { return vk::ImageViewType::e2D; }
+        case vk::ImageType::e3D: { return vk::ImageViewType::e3D; }
+        default: {
+            spdlog::error("Unsupported vk::ImageType {}", (u32)type);
+            std::abort();
+        }
+    }
+}
+
+static constexpr vk::DescriptorType to_vk_desc_type(DescriptorType type) {
+    switch (type) {
+        case DescriptorType::SampledImage: { return vk::DescriptorType::eSampledImage; }
+        case DescriptorType::StorageImage: { return vk::DescriptorType::eStorageImage; }
+        case DescriptorType::StorageBuffer: { return vk::DescriptorType::eStorageBuffer; }
+        case DescriptorType::UniformBuffer: { return vk::DescriptorType::eUniformBuffer; }
+        case DescriptorType::Sampler: { return vk::DescriptorType::eSampler; }
+        default: {
+            spdlog::error("Unrecognized descriptor type {}", (u32)type);
+            std::abort();
+        }
+    }
+}
+
+static constexpr vk::Format to_vk_format(RGImageFormat format) {
+    switch(format) {
+        case RGImageFormat::R32UI: { return vk::Format::eR32Uint; }
+        case RGImageFormat::RGBA8Unorm: { return vk::Format::eR8G8B8A8Unorm; }
+        default: {
+            spdlog::error("Unrecognized RGImageFormat {}", (u32)format);
+            std::abort();
+        }
+    }
+}
+
 void RenderGraph::create_rendering_resources() {
     auto* renderer = get_context().renderer;
 
-    for(const auto& pass : passes) {
-        std::vector<u32> attachments;
-        attachments.insert(attachments.end(), pass.color_attachments.begin(), pass.color_attachments.end());
-        if(pass.depth_attachment) { attachments.push_back(pass.depth_attachment.value()); }
-
-        for(const auto handle : attachments) {
-            const auto& rp_resource = pass.resources.at(handle);
+    for(auto& pass : passes) {
+        std::vector<DescriptorInfo> descriptor_infos;
+        for(const auto& rp_resource : pass.resources) {
             const auto& rg_resource = resources.at(rp_resource.resource);
 
             if(!rg_resource.texture) { continue; /*Swapchain image*/ }
@@ -115,13 +142,45 @@ void RenderGraph::create_rendering_resources() {
             auto view = renderer->device.createImageView(vk::ImageViewCreateInfo{
                 {},
                 rg_resource.texture->image,
-                vk::ImageViewType::e2D,
-                rg_resource.texture->format,
+                vk_img_type_to_vk_img_view_type(rg_resource.texture->type),
+                rp_resource.texture_info.mutable_format == RGImageFormat::DeduceFromVkImage ? rg_resource.texture->format : to_vk_format(rp_resource.texture_info.mutable_format),
                 {},
                 to_vk_subresource_range(rp_resource.texture_info.range, rp_resource.usage == RGResourceUsage::DepthAttachment ? RGImageAspect::Depth : RGImageAspect::Color)
             });
 
-            image_views.emplace(std::make_pair(&pass, rp_resource.resource), view);   
+            set_debug_name(renderer->device, view, std::format("{}_rgview", rg_resource.name));
+
+            image_views.emplace(std::make_pair(&pass, rp_resource.resource), view);
+
+            if(rp_resource.usage != RGResourceUsage::Image) { continue; }
+            if(pass.pipeline) {
+                auto binding = pass.pipeline->layout.find_binding(rg_resource.name);
+                if(!binding) {
+                    continue;
+                }
+                descriptor_infos.push_back(DescriptorInfo{
+                    to_vk_desc_type(binding->type),
+                    view,
+                    to_vk_layout(rp_resource.texture_info.required_layout)
+                });
+            }
+        }
+
+        if(pass.pipeline) {
+            auto sampler = renderer->device.createSampler(vk::SamplerCreateInfo{
+                {},
+                vk::Filter::eLinear,
+                vk::Filter::eLinear,
+                vk::SamplerMipmapMode::eLinear,
+                {}, {}, {},
+                0.0f, false, 0.0f, false,
+                {},
+                0.0f, 8.0f
+            });
+            descriptor_infos.push_back(DescriptorInfo{vk::DescriptorType::eSampler, sampler});
+            
+            pass.set = DescriptorSet{renderer->device, renderer->global_desc_pool, pass.pipeline->layout.descriptor_sets.at(1).layout};
+            pass.set.update_bindings(renderer->device, 0, 0, descriptor_infos);
         }
     }
 }
@@ -374,7 +433,14 @@ void RenderGraph::render(vk::CommandBuffer cmd, vk::Image swapchain_image, vk::I
             spdlog::debug("{}", pass.name);
 
             if(pass.pipeline) {
+                auto* renderer = get_context().renderer;
                 cmd.bindPipeline(to_vk_bind_point(pass.pipeline->type), pass.pipeline->pipeline);
+                vk::DescriptorSet sets_to_bind[] {
+                    renderer->global_set.set,
+                    pass.set.set,
+                };
+                cmd.bindDescriptorSets(to_vk_bind_point(pass.pipeline->type), pass.pipeline->layout.layout, 0, sets_to_bind, {});
+
                 if(pass.pipeline->type == PipelineType::Graphics) {
                     std::vector<vk::RenderingAttachmentInfo> color_attachments;
                     color_attachments.reserve(pass.color_attachments.size());
@@ -449,12 +515,12 @@ void RenderGraph::render(vk::CommandBuffer cmd, vk::Image swapchain_image, vk::I
                         }
                     });
                 }
+            }
 
-                if(pass.func) { pass.func(cmd); }
+            if(pass.func) { pass.func(cmd); }
 
-                if(pass.pipeline->type == PipelineType::Graphics) {
-                    cmd.endRendering();
-                }
+            if(pass.pipeline && pass.pipeline->type == PipelineType::Graphics) {
+                cmd.endRendering();
             }
         }
 

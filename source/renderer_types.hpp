@@ -6,7 +6,42 @@
 #include <array>
 
 enum class DescriptorType {
-    None, SampledImage, StorageImage, Sampler, UniformBuffer, StorageBuffer
+    SampledImage, StorageImage, Sampler, UniformBuffer, StorageBuffer
+};
+
+struct DescriptorInfo {
+    enum Resource : u8 { None=0, Buffer=1, Image=2, Sampler=3 };
+    
+    constexpr DescriptorInfo() {}
+    constexpr DescriptorInfo(vk::DescriptorType type, vk::Buffer buffer, vk::DeviceSize offset, vk::DeviceSize size): 
+        buffer_info(buffer, offset, size),
+        type(type),
+        resource(Buffer) {}
+    constexpr DescriptorInfo(vk::DescriptorType type, vk::ImageView image, vk::ImageLayout layout): 
+        image_info({}, image, layout),
+        type(type),
+        resource(Image) {}
+    constexpr DescriptorInfo(vk::DescriptorType type, vk::Sampler sampler): 
+        image_info(sampler, {}, {}),
+        type(type),
+        resource(Sampler) {}
+
+    union {
+        vk::DescriptorBufferInfo buffer_info;
+        vk::DescriptorImageInfo image_info;
+        vk::DescriptorImageInfo sampler_info;
+    };
+    vk::DescriptorType type;
+    Resource resource{None};
+};
+
+struct DescriptorSet {
+    DescriptorSet() = default;
+    DescriptorSet(vk::Device device, vk::DescriptorPool pool, vk::DescriptorSetLayout layout);
+
+    void update_bindings(vk::Device device, u32 dst_binding, u32 dst_arr_element, std::span<DescriptorInfo> infos);
+    
+    vk::DescriptorSet set;
 };
 
 struct DescriptorBinding {

@@ -8,6 +8,7 @@
 #include <format>
 #include <functional>
 #include <vulkan/vulkan_enums.hpp>
+#include "renderer_types.hpp"
 
 struct Pipeline;
 struct TextureStorage;
@@ -47,6 +48,10 @@ enum class RGImageLayout {
     TransferDst, TransferSrc, PresentSrc
 };
 
+enum class RGImageFormat {
+    DeduceFromVkImage, RGBA8Unorm, R32UI
+};
+
 struct TextureRange {
     bool intersects(TextureRange r) const {
         return (
@@ -84,6 +89,7 @@ struct TextureRange {
 
 struct TextureInfo {
     RGImageLayout required_layout;
+    RGImageFormat mutable_format{RGImageFormat::DeduceFromVkImage};
     TextureRange range;
 };
 
@@ -395,6 +401,7 @@ struct RenderPass {
     
     std::string name;
     Pipeline* pipeline{};
+    DescriptorSet set;
     std::function<void(vk::CommandBuffer)> func;
     RenderPassRenderingExtent extent;
     std::vector<RPResource> resources;
