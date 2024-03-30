@@ -4,12 +4,9 @@
 #include <string>
 #include <optional>
 #include <map>
-#include <iostream>
-#include <format>
 #include <functional>
-#include <vulkan/vulkan_enums.hpp>
-#include "renderer_types.hpp"
 
+struct DescriptorSet;
 struct Pipeline;
 struct TextureStorage;
 
@@ -392,21 +389,28 @@ struct RenderPass {
         return *this;
     }
 
+    RenderPass& set_make_sampler(bool make) {
+        make_sampler = make;
+        return *this;
+    }
+
     const RPResource* get_resource(RgResourceHandle handle) const {
         for(auto& r : resources) {
             if(r.resource == handle) { return &r; }
         }
         return nullptr;
     }
+
     
     std::string name;
     Pipeline* pipeline{};
-    DescriptorSet set;
+    DescriptorSet* set;
     std::function<void(vk::CommandBuffer)> func;
     RenderPassRenderingExtent extent;
     std::vector<RPResource> resources;
     std::vector<u32> color_attachments; 
     std::optional<u32> depth_attachment;
+    bool make_sampler{true};
 };
 
 class RenderGraph {

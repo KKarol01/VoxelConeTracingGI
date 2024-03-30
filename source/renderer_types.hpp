@@ -6,7 +6,7 @@
 #include <array>
 
 enum class DescriptorType {
-    SampledImage, StorageImage, Sampler, UniformBuffer, StorageBuffer
+    SampledImage, StorageImage, Sampler, UniformBuffer, StorageBuffer, CombinedImageSampler
 };
 
 struct DescriptorInfo {

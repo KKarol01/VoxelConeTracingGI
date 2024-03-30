@@ -50,6 +50,13 @@ public:
         return *this;
     }
 
+    PipelineBuilder& with_push_constant(size_t offset, size_t size) {
+        push_constants
+            .setOffset(offset)
+            .setSize(size);
+        return *this;
+    }
+
     Pipeline build_graphics(std::string_view label);
 
     Pipeline build_compute(std::string_view label);
@@ -68,4 +75,5 @@ private:
     vk::CompareOp depth_compare{vk::CompareOp::eLess};
     std::vector<vk::Format> color_attachment_formats;
     vk::Format depth_attachment_format{vk::Format::eUndefined};
+    vk::PushConstantRange push_constants{};
 };

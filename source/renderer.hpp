@@ -15,8 +15,6 @@
 
 class RenderGraph;
 
-
-
 struct Vertex {
     glm::vec3 position;
     glm::vec3 normal;
@@ -79,7 +77,7 @@ public:
 
     void setup_scene();
 
-    void draw();
+    void render();
 
     TextureStorage* create_texture_storage(const vk::ImageCreateInfo& image_info) {
         VmaAllocationCreateInfo alloc_info = {};
@@ -113,7 +111,7 @@ private:
     bool initialize_imgui();
     bool initialize_render_passes();
 
-    void draw_ui();
+    void draw_ui(vk::CommandBuffer cmd, vk::ImageView swapchain_view);
 
     template<typename T> GpuBuffer* create_buffer(std::string_view label, vk::BufferUsageFlags usage, std::span<T> data) {
         vk::BufferCreateInfo buffer_info{
@@ -191,6 +189,7 @@ public:
     Pipeline pp_default_lit;
     Pipeline pp_voxelize;
     Pipeline pp_merge_voxels;
+    Pipeline pp_imgui;
     bool recompile_pipelines = false;
 
     vk::QueryPool query_pool;

@@ -43,13 +43,15 @@ std::vector<ShaderResource> get_shader_resources(const std::vector<u32>& ir) {
         &resources.separate_samplers,
         &resources.uniform_buffers,
         &resources.storage_buffers,
+        &resources.sampled_images
     };
     DescriptorType resource_types[] {
         DescriptorType::SampledImage,
         DescriptorType::StorageImage,
         DescriptorType::Sampler,
         DescriptorType::UniformBuffer,
-        DescriptorType::StorageBuffer
+        DescriptorType::StorageBuffer,
+        DescriptorType::CombinedImageSampler
     };
 
     std::vector<ShaderResource> shader_resources;
@@ -229,6 +231,7 @@ static vk::DescriptorType to_vk_desc_type(DescriptorType type) {
         case Sampler:        { return vk::DescriptorType::eSampler; }
         case UniformBuffer:  { return vk::DescriptorType::eUniformBuffer; }
         case StorageBuffer:  { return vk::DescriptorType::eStorageBuffer; }
+        case CombinedImageSampler:  { return vk::DescriptorType::eCombinedImageSampler; }
         default: {
             spdlog::error("Unrecognized descriptor type: {}", (u32)type);
             std::abort(); 
@@ -283,10 +286,12 @@ PipelineLayout PipelineBuilder::coalesce_shader_resources_into_layout() {
         ++i;
     }
 
-    layout.layout = get_context().renderer->device.createPipelineLayout(vk::PipelineLayoutCreateInfo{
-        {},
-        set_layouts
-    });
+    push_constants.setStageFlags(ALL_STAGE_FLAGS);
+    vk::PipelineLayoutCreateInfo layout_info{{}, set_layouts};
+    if(push_constants.size > 0u) {
+        layout_info.setPushConstantRanges(push_constants);
+    }
+    layout.layout = get_context().renderer->device.createPipelineLayout(layout_info);
 
     return layout;
 }

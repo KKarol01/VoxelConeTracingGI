@@ -167,20 +167,22 @@ void RenderGraph::create_rendering_resources() {
         }
 
         if(pass.pipeline) {
-            auto sampler = renderer->device.createSampler(vk::SamplerCreateInfo{
-                {},
-                vk::Filter::eLinear,
-                vk::Filter::eLinear,
-                vk::SamplerMipmapMode::eLinear,
-                {}, {}, {},
-                0.0f, false, 0.0f, false,
-                {},
-                0.0f, 8.0f
-            });
-            descriptor_infos.push_back(DescriptorInfo{vk::DescriptorType::eSampler, sampler});
+            if(pass.make_sampler) {
+                auto sampler = renderer->device.createSampler(vk::SamplerCreateInfo{
+                    {},
+                    vk::Filter::eLinear,
+                    vk::Filter::eLinear,
+                    vk::SamplerMipmapMode::eLinear,
+                    {}, {}, {},
+                    0.0f, false, 0.0f, false,
+                    {},
+                    0.0f, 9.0f
+                });
+                descriptor_infos.push_back(DescriptorInfo{vk::DescriptorType::eSampler, sampler});
+            }
             
-            pass.set = DescriptorSet{renderer->device, renderer->global_desc_pool, pass.pipeline->layout.descriptor_sets.at(1).layout};
-            pass.set.update_bindings(renderer->device, 0, 0, descriptor_infos);
+            pass.set = new DescriptorSet{renderer->device, renderer->global_desc_pool, pass.pipeline->layout.descriptor_sets.at(1).layout};
+            pass.set->update_bindings(renderer->device, 0, 0, descriptor_infos);
         }
     }
 }
@@ -398,7 +400,7 @@ void RenderGraph::render(vk::CommandBuffer cmd, vk::Image swapchain_image, vk::I
     for(u32 offset = 0, stage = 0; auto pass_count : stage_pass_counts) {
 
         auto& barriers = stage_deps.at(stage);
-        spdlog::debug("Stage {}. Barriers: {}", stage, barriers.image_barriers.size() + (barriers.swapchain_image_barrier.has_value()));
+        // spdlog::debug("Stage {}. Barriers: {}", stage, barriers.image_barriers.size() + (barriers.swapchain_image_barrier.has_value()));
 
         std::vector<vk::ImageMemoryBarrier2> image_barriers;
         image_barriers.reserve(barriers.image_barriers.size() + 1u);
@@ -414,30 +416,30 @@ void RenderGraph::render(vk::CommandBuffer cmd, vk::Image swapchain_image, vk::I
 
         for(u32 i=0; i<dependency_info.imageMemoryBarrierCount; ++i) {
             auto& barrier = dependency_info.pImageMemoryBarriers[i];
-            spdlog::debug("({}) {}:{} -> {}:{} {} -> {} RNG: {} - {} {} - {}",
-                (u64)(VkImage)barrier.image,
-                vk::to_string(barrier.srcStageMask),
-                vk::to_string(barrier.srcAccessMask),
-                vk::to_string(barrier.dstStageMask),
-                vk::to_string(barrier.dstAccessMask),
-                vk::to_string(barrier.oldLayout),
-                vk::to_string(barrier.newLayout),
-                barrier.subresourceRange.baseMipLevel,
-                barrier.subresourceRange.levelCount,
-                barrier.subresourceRange.baseArrayLayer,
-                barrier.subresourceRange.layerCount);
+            // spdlog::debug("({}) {}:{} -> {}:{} {} -> {} RNG: {} - {} {} - {}",
+            //     (u64)(VkImage)barrier.image,
+            //     vk::to_string(barrier.srcStageMask),
+            //     vk::to_string(barrier.srcAccessMask),
+            //     vk::to_string(barrier.dstStageMask),
+            //     vk::to_string(barrier.dstAccessMask),
+            //     vk::to_string(barrier.oldLayout),
+            //     vk::to_string(barrier.newLayout),
+            //     barrier.subresourceRange.baseMipLevel,
+            //     barrier.subresourceRange.levelCount,
+            //     barrier.subresourceRange.baseArrayLayer,
+            //     barrier.subresourceRange.layerCount);
         }
 
         for(u32 i = offset; i < offset + pass_count; ++i) {
             const auto& pass = passes.at(i);
-            spdlog::debug("{}", pass.name);
+            // spdlog::debug("{}", pass.name);
 
             if(pass.pipeline) {
                 auto* renderer = get_context().renderer;
                 cmd.bindPipeline(to_vk_bind_point(pass.pipeline->type), pass.pipeline->pipeline);
                 vk::DescriptorSet sets_to_bind[] {
                     renderer->global_set.set,
-                    pass.set.set,
+                    pass.set->set,
                 };
                 cmd.bindDescriptorSets(to_vk_bind_point(pass.pipeline->type), pass.pipeline->layout.layout, 0, sets_to_bind, {});
 

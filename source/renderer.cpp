@@ -243,7 +243,7 @@ void Renderer::setup_scene() {
     material_set.update_bindings(device, 0, 0, material_set_infos);
 }
 
-void Renderer::draw() {
+void Renderer::render() {
     while(!glfwWindowShouldClose(window)) {
         camera.update();
         get_context().input->update();
@@ -267,6 +267,8 @@ void Renderer::draw() {
         cmd.bindIndexBuffer(scene.index_buffer->buffer, 0, vk::IndexType::eUint32);
         render_graph->render(cmd, swapchain_images.at(img), swapchain_views.at(img));
 
+        draw_ui(cmd, swapchain_views.at(img));
+
         cmd.end();
         vk::PipelineStageFlags wait_masks[] {
             vk::PipelineStageFlagBits::eColorAttachmentOutput
@@ -276,6 +278,7 @@ void Renderer::draw() {
         presentation_queue.presentKHR(vk::PresentInfoKHR{
             fr.rendering_semaphore, swapchain, image_indices
         });
+
 
         /* This waits indefinitely if no query was made */
         // auto result = device.getQueryPoolResults<u64>(query_pool, 0u, 5u, 5u*sizeof(u64), sizeof(u64), vk::QueryResultFlagBits::e64 | vk::QueryResultFlagBits::eWait).value;
@@ -492,10 +495,12 @@ bool Renderer::initialize_render_passes() {
         "voxelize.geom",
         "voxelize.frag",
         "merge_voxels.comp",
+        "imgui.vert",
+        "imgui.frag",
     };
     std::vector<std::vector<u32>> irs(shader_paths.size()); 
     std::vector<std::vector<ShaderResource>> shader_resources(shader_paths.size());
-    #pragma omp parallel for
+    // #pragma omp parallel for
     for(u32 i=0; i<irs.size(); ++i) {
         irs.at(i) = compile_glsl_to_spv(shader_paths.at(i));
         shader_resources.at(i) = get_shader_resources(irs.at(i));
@@ -522,32 +527,11 @@ bool Renderer::initialize_render_passes() {
         vk::DescriptorSetLayoutBinding{0, vk::DescriptorType::eUniformBuffer, 1, all_stages},
     };
 
-    // vk::DescriptorSetLayoutBinding default_lit_set_bindings[] {
-    //     vk::DescriptorSetLayoutBinding{0, vk::DescriptorType::eSampledImage, 1, all_stages},
-    //     vk::DescriptorSetLayoutBinding{1, vk::DescriptorType::eSampler, 1, all_stages},
-    // };
-
-    // vk::DescriptorSetLayoutBinding voxelize_set_bindings[] {
-    //     vk::DescriptorSetLayoutBinding{0, vk::DescriptorType::eStorageImage, 1, all_stages},
-    //     vk::DescriptorSetLayoutBinding{1, vk::DescriptorType::eStorageImage, 1, all_stages},
-    //     vk::DescriptorSetLayoutBinding{2, vk::DescriptorType::eSampler, 1, all_stages},
-    // };
-
-    // vk::DescriptorSetLayoutBinding merge_voxels_set_bindings[] {
-    //     vk::DescriptorSetLayoutBinding{0, vk::DescriptorType::eSampledImage, 1, all_stages},
-    //     vk::DescriptorSetLayoutBinding{1, vk::DescriptorType::eStorageImage, 1, all_stages},
-    //     vk::DescriptorSetLayoutBinding{2, vk::DescriptorType::eStorageImage, 1, all_stages},
-    //     vk::DescriptorSetLayoutBinding{3, vk::DescriptorType::eSampler, 1, all_stages},
-    // };
-
     vk::DescriptorSetLayoutBinding material_set_bindings[] {
         vk::DescriptorSetLayoutBinding{0, vk::DescriptorType::eStorageBuffer, 1, all_stages},
     };
 
     vk::DescriptorSetLayoutCreateInfo global_set_info{{}, global_set_bindings};
-    // vk::DescriptorSetLayoutCreateInfo default_lit_info{{}, default_lit_set_bindings};
-    // vk::DescriptorSetLayoutCreateInfo voxelize_info{{}, voxelize_set_bindings};
-    // vk::DescriptorSetLayoutCreateInfo merge_voxels_info{{}, merge_voxels_set_bindings};
     vk::DescriptorSetLayoutCreateInfo material_info{{}, material_set_bindings};
 
     vk::DescriptorPoolSize global_sizes[] {
@@ -636,6 +620,24 @@ bool Renderer::initialize_render_passes() {
             {vk::ShaderStageFlagBits::eCompute, &shaders.at(5)},
         })
         .build_compute("merge_voxels_pipeline");
+
+    PipelineBuilder imgui_builder{this};
+    pp_imgui = imgui_builder
+        .with_vertex_input(
+            {
+                vk::VertexInputBindingDescription{0, sizeof(Vertex), vk::VertexInputRate::eVertex}
+            },
+            {
+                vk::VertexInputAttributeDescription{0, 0, vk::Format::eR32G32Sfloat, 0},
+                vk::VertexInputAttributeDescription{1, 0, vk::Format::eR32G32Sfloat, 8},
+                vk::VertexInputAttributeDescription{2, 0, vk::Format::eR32G32B32A32Sfloat, 16},
+            })
+        .with_shaders({
+            {vk::ShaderStageFlagBits::eVertex, &shaders.at(6)},
+            {vk::ShaderStageFlagBits::eFragment, &shaders.at(7)},
+        })
+        .with_push_constant(0, 16u)
+        .build_graphics("imgui_pipeline");
 
     glm::mat4 global_buffer_size[2];
     global_buffer = create_buffer("global_ubo", vk::BufferUsageFlagBits::eUniformBuffer, std::span{global_buffer_size, 2});
@@ -831,7 +833,19 @@ bool Renderer::initialize_render_passes() {
     return true;
 }
 
-void Renderer::draw_ui() {
+void Renderer::draw_ui(vk::CommandBuffer cmd, vk::ImageView swapchain_view) {
+    cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, pp_imgui.pipeline);
+    vk::RenderingAttachmentInfo color_view{
+        swapchain_view,
+        vk::ImageLayout::eColorAttachmentOptimal,
+        {},
+        {},
+        {},
+        vk::AttachmentLoadOp::eLoad,
+        vk::AttachmentStoreOp::eStore
+    };
+    cmd.beginRendering(vk::RenderingInfo{{}, {{}, {1024, 768}}, 1, 0, color_view});
+    
     ImGui_ImplVulkan_NewFrame();
     ImGui_ImplGlfw_NewFrame();
     ImGui::NewFrame();
@@ -879,4 +893,6 @@ void Renderer::draw_ui() {
 
     ImGui::Render();
     ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), get_frame_res().cmd);
+
+    cmd.endRendering();
 }

@@ -37,5 +37,5 @@ int main() {
         get_context().input->glfw_key_callback(key, action);
     });
 
-    r.draw();
+    r.render();
 }
