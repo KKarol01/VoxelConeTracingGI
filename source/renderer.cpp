@@ -17,6 +17,8 @@ VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE
 #include <imgui/backends/imgui_impl_vulkan.h>
 #include <format>
 #include <stack>
+#include <slang/slang.h>
+#include <slang/slang-com-ptr.h>
 
 DescriptorSet::DescriptorSet(vk::Device device, vk::DescriptorPool pool, vk::DescriptorSetLayout layout) {
     set = device.allocateDescriptorSets(vk::DescriptorSetAllocateInfo{pool, layout})[0];
@@ -500,7 +502,7 @@ bool Renderer::initialize_render_passes() {
     };
     std::vector<std::vector<u32>> irs(shader_paths.size()); 
     std::vector<std::vector<ShaderResource>> shader_resources(shader_paths.size());
-    // #pragma omp parallel for
+    #pragma omp parallel for
     for(u32 i=0; i<irs.size(); ++i) {
         irs.at(i) = compile_glsl_to_spv(shader_paths.at(i));
         shader_resources.at(i) = get_shader_resources(irs.at(i));

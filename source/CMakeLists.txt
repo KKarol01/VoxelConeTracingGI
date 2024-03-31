@@ -2,6 +2,7 @@ project(vxgi)
 
 add_custom_target(copy_data ALL 
     COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/data ${CMAKE_CURRENT_BINARY_DIR}/data
+    COMMAND ${CMAKE_COMMAND} -E copy ${CMAKE_SOURCE_DIR}/third_party/slang/bin/slang.dll ${CMAKE_CURRENT_BINARY_DIR}/slang.dll
 )
 
 add_executable(vxgi
@@ -39,6 +40,7 @@ target_precompile_headers(vxgi
         <spdlog/spdlog.h>
         <shaderc/shaderc.hpp>
         <spirv_cross/spirv_cross.hpp>
+        <slang/slang.h>
 )
 
 target_include_directories(vxgi
@@ -50,6 +52,7 @@ target_include_directories(vxgi
 target_link_directories(vxgi
     PRIVATE
         $ENV{VULKAN_SDK}/lib
+        ${CMAKE_SOURCE_DIR}/third_party/slang/bin
 )
 
 target_link_libraries(vxgi
@@ -67,4 +70,5 @@ target_link_libraries(vxgi
         $<$<CONFIG:Debug>: spirv-cross-cored>
         $<$<CONFIG:Release>: spirv-cross-core>
         libomp
+        slang
 )
