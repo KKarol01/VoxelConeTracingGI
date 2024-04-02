@@ -5,10 +5,6 @@
 #include <vulkan/vulkan.hpp>
 VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE
 #include <spdlog/spdlog.h>
-#include <fastgltf/core.hpp>
-#include <fastgltf/types.hpp>
-#include <fastgltf/tools.hpp>
-#include <fastgltf/glm_element_traits.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <VkBootstrap.h>
 #include <stb/stb_include.h>
@@ -16,7 +12,7 @@ VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE
 #include <imgui/backends/imgui_impl_glfw.h>
 #include <imgui/backends/imgui_impl_vulkan.h>
 #include <format>
-#include <stack>
+#include <numeric>
 #include <slang/slang.h>
 #include <slang/slang-com-ptr.h>
 
@@ -67,6 +63,21 @@ Texture2D::Texture2D(u32 width, u32 height, vk::Format format, u32 mips, vk::Ima
         vk::ImageTiling::eOptimal,
         usage
     });
+}
+
+Texture2D::Texture2D(u32 width, u32 height, vk::Format format, u32 mips, vk::ImageUsageFlags usage, std::shared_ptr<std::vector<std::byte>> data) {
+    storage = get_context().renderer->create_texture_storage(vk::ImageCreateInfo{
+        {},
+        vk::ImageType::e2D,
+        format,
+        {width, height, 1},
+        mips,
+        1,
+        vk::SampleCountFlagBits::e1,
+        vk::ImageTiling::eOptimal,
+        usage
+    },
+    data);
 }
 
 Texture3D::Texture3D(u32 width, u32 height, u32 depth, vk::Format format, u32 mips, vk::ImageUsageFlags usage) {
@@ -121,178 +132,95 @@ bool Renderer::initialize() {
     return true;
 }
 
-bool Renderer::load_model_from_file(std::string_view name, const std::filesystem::path& path) {
-    fastgltf::Parser parser;
-
-    fastgltf::GltfDataBuffer data;
-    data.loadFromFile(path);
-
-    static constexpr auto options = 
-        fastgltf::Options::DontRequireValidAssetMember |
-        fastgltf::Options::LoadExternalBuffers |
-        fastgltf::Options::LoadExternalImages;
-    auto gltf = parser.loadGltf(&data, path.parent_path(), options);
-    if(auto error = gltf.error(); error != fastgltf::Error::None) {
-        spdlog::error("fastgltf: Unable to load file: {}", fastgltf::getErrorMessage(error));
-        return false;
-    }
-
-    std::stack<const fastgltf::Node*> node_stack;
-    for(auto node : gltf->scenes[0].nodeIndices) {
-        node_stack.emplace(&gltf->nodes[node]);
-    }
-
-    Model model;
-
-    while(!node_stack.empty()) {
-        auto node = node_stack.top();
-        node_stack.pop();
-        spdlog::debug("{}", node->name);
-
-        for(auto node : node->children) {
-            node_stack.emplace(&gltf->nodes[node]);
-        }
-
-        if(node->meshIndex.has_value()) {
-            const auto& fgmesh = gltf->meshes[node->meshIndex.value()];
-
-            for(const auto& primitive : fgmesh.primitives) {
-                Mesh mesh;
-                mesh.name = fgmesh.name;
-
-                auto& _gltf = gltf.get();
-                auto& positions = gltf->accessors[primitive.findAttribute("POSITION")->second];
-                auto& normals = gltf->accessors[primitive.findAttribute("NORMAL")->second];
-                auto initial_index = mesh.vertices.size();
-
-                mesh.vertices.resize(mesh.vertices.size() + positions.count);
-                fastgltf::iterateAccessorWithIndex<glm::vec3>(_gltf, positions, [&](glm::vec3 vec, size_t idx) {
-                    mesh.vertices[initial_index + idx].position = vec; 
-                });
-                fastgltf::iterateAccessorWithIndex<glm::vec3>(_gltf, normals, [&](glm::vec3 vec, size_t idx) {
-                    mesh.vertices[initial_index + idx].normal = vec; 
-                });
-                if(primitive.findAttribute("COLOR_0") != primitive.attributes.end()) {
-                    auto& colors = gltf->accessors[primitive.findAttribute("COLOR_0")->second];
-                    fastgltf::iterateAccessorWithIndex<glm::vec4>(_gltf, colors, [&](glm::vec4 vec, size_t idx) {
-                        mesh.vertices[initial_index + idx].color = glm::vec3{vec.x, vec.y, vec.z}; 
-                    });
-                } else {
-                    fastgltf::iterateAccessorWithIndex<glm::vec3>(_gltf, positions, [&](glm::vec3 vec, size_t idx) {
-                        mesh.vertices[initial_index + idx].color = glm::vec3{1.0};
-                    });
-                }
-
-                if(primitive.indicesAccessor.has_value()) {
-                    u64 start_index = mesh.indices.size();
-                    mesh.indices.resize(mesh.indices.size() + gltf->accessors[primitive.indicesAccessor.value()].count);
-                    fastgltf::iterateAccessorWithIndex<u32>(_gltf, gltf->accessors[primitive.indicesAccessor.value()], [&](u32 index, u32 idx) {
-                        mesh.indices[start_index + idx] = index;
-                    });
-                }
-
-                model.meshes.push_back(std::move(mesh));
-            }
-
-        }
-    }
-
-    models[name.data()] = std::move(model);
-
-    return true;
-}
-
 void Renderer::setup_scene() {
-    std::vector<float> vertices;
-    std::vector<u32> indices;
-    std::vector<Material> materials;
+    auto& context = get_context();
+    auto& scene = *context.scene;
 
-    for(auto& [name, model] : models) {
-        for(auto& mesh : model.meshes) {
-            GpuMesh gpu{
-                .mesh = &mesh,
-                .vertex_offset = (u32)vertices.size() / (u32)(sizeof(Vertex) / sizeof(f32)),
-                .vertex_count = (u32)mesh.vertices.size(),
-                .index_offset = (u32)indices.size(),
-                .index_count = (u32)mesh.indices.size()
-            };
-
-            scene.models.push_back(gpu);
-            materials.push_back(mesh.material);
-
-            for(auto& v : mesh.vertices) {
-                vertices.push_back(v.position.x);
-                vertices.push_back(v.position.y);
-                vertices.push_back(v.position.z);
-                vertices.push_back(v.normal.x);
-                vertices.push_back(v.normal.y);
-                vertices.push_back(v.normal.z);
-                vertices.push_back(v.color.x);
-                vertices.push_back(v.color.y);
-                vertices.push_back(v.color.z);
-            }
-
-            indices.insert(indices.end(), mesh.indices.begin(), mesh.indices.end());
+    u64 num_vertices = 0ull, num_indices = 0ull;
+    for(const auto& model : scene.models) {
+        for(const auto& mesh : model.meshes) {
+            num_vertices += mesh.vertices.size();
+            num_indices += mesh.indices.size();
         }
     }
 
-    scene.vertex_buffer = create_buffer("scene_vertex_buffer", vk::BufferUsageFlagBits::eVertexBuffer, std::span{vertices});
-    scene.index_buffer = create_buffer("scene_index_buffer", vk::BufferUsageFlagBits::eIndexBuffer, std::span{indices});
-    scene.material_buffer = create_buffer("scene_material_buffer", vk::BufferUsageFlagBits::eStorageBuffer, std::span{materials});
-    DescriptorInfo material_set_infos[] {
-        DescriptorInfo{vk::DescriptorType::eStorageBuffer, scene.material_buffer->buffer, 0ull, vk::WholeSize},
-    };
-    material_set.update_bindings(device, 0, 0, material_set_infos);
+    render_scene.vertex_buffer = create_buffer("scene_vertex_buffer", vk::BufferUsageFlagBits::eVertexBuffer, num_vertices * sizeof(Vertex));
+    render_scene.index_buffer = create_buffer("scene_index_buffer", vk::BufferUsageFlagBits::eIndexBuffer, num_indices * sizeof(u32));
+    // render_scene.material_buffer = create_buffer("scene_material_buffer", vk::BufferUsageFlagBits::eStorageBuffer, std::span{materials});
+
+    auto* vertex_buffer = static_cast<std::byte*>(render_scene.vertex_buffer->data);
+    auto* index_buffer = static_cast<std::byte*>(render_scene.index_buffer->data);
+
+    num_vertices = 0ull;
+    num_indices = 0ull; 
+    for(const auto& model : scene.models) {
+        for(const auto& mesh : model.meshes) {
+            render_scene.models.push_back(GpuMesh{
+                .mesh = &mesh,
+                .vertex_offset = (u32)num_vertices,
+                .vertex_count = (u32)mesh.vertices.size(),
+                .index_offset = (u32)num_indices,
+                .index_count = (u32)mesh.indices.size()
+            });
+
+            memcpy(vertex_buffer + num_vertices * sizeof(Vertex), mesh.vertices.data(), mesh.vertices.size() * sizeof(Vertex));
+            memcpy(index_buffer + num_indices * sizeof(u32), mesh.indices.data(), mesh.indices.size() * sizeof(u32));
+
+            num_vertices += mesh.vertices.size();
+            num_indices += mesh.indices.size();
+        }
+    }
 }
 
 void Renderer::render() {
-    while(!glfwWindowShouldClose(window)) {
-        camera.update();
-        get_context().input->update();
-        glfwPollEvents();
+    static const auto P = glm::perspectiveFov(glm::radians(75.0f), 1024.0f, 768.0f, 0.01f, 25.0f);
+    auto V = get_context().camera->view;
+    glm::mat4 global_buffer_data[] {
+        P, V
+    };
+    memcpy(global_buffer->data, global_buffer_data, sizeof(global_buffer_data));
 
-        auto P = glm::perspectiveFov(glm::radians(75.0f), 1024.0f, 768.0f, 0.01f, 25.0f);
-        auto V = camera.view;
-        glm::mat4 global_buffer_data[] {
-            P, V
-        };
-        memcpy(global_buffer->data, global_buffer_data, sizeof(global_buffer_data));
+    auto& fr = get_frame_res();
+    auto& cmd = fr.cmd;
 
-        auto& fr = get_frame_res();
-        auto& cmd = fr.cmd;
+    auto img = device.acquireNextImageKHR(swapchain, -1ull, fr.swapchain_semaphore).value;
+    
+    cmd.begin({vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
 
-        auto img = device.acquireNextImageKHR(swapchain, -1ull, fr.swapchain_semaphore).value;
-        
-        cmd.begin({vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
-        cmd.resetQueryPool(query_pool, 0, 7);
-        cmd.bindVertexBuffers(0, scene.vertex_buffer->buffer, 0ull);
-        cmd.bindIndexBuffer(scene.index_buffer->buffer, 0, vk::IndexType::eUint32);
-        render_graph->render(cmd, swapchain_images.at(img), swapchain_views.at(img));
-
-        draw_ui(cmd, swapchain_views.at(img));
-
-        cmd.end();
-        vk::PipelineStageFlags wait_masks[] {
-            vk::PipelineStageFlagBits::eColorAttachmentOutput
-        };
-        graphics_queue.submit(vk::SubmitInfo{fr.swapchain_semaphore, wait_masks, cmd, fr.rendering_semaphore});
-        u32 image_indices[] {img};
-        presentation_queue.presentKHR(vk::PresentInfoKHR{
-            fr.rendering_semaphore, swapchain, image_indices
-        });
-
-
-        /* This waits indefinitely if no query was made */
-        // auto result = device.getQueryPoolResults<u64>(query_pool, 0u, 5u, 5u*sizeof(u64), sizeof(u64), vk::QueryResultFlagBits::e64 | vk::QueryResultFlagBits::eWait).value;
-        // const float to_ms = tick_length * 0.000001f;
-        // float voxelization_time = float(result[1] - result[0]) * to_ms;
-        // float compute_radiance_time = float(result[2] - result[1]) * to_ms;
-        // float radiance_mip_time = float(result[3] - result[2]) * to_ms;
-        // float default_lit_time = float(result[4] - result[3]) * to_ms;
-        // spdlog::info("Vox: {:3.2f}, Rad: {:3.2f}, Mip: {:3.2f} Light: {:3.2f}", voxelization_time, compute_radiance_time, radiance_mip_time, default_lit_time);
-        
-        device.waitIdle();
+    if(!texture_jobs.empty()) {
+        load_waiting_textures(cmd);
     }
+
+    cmd.resetQueryPool(query_pool, 0, 7);
+    cmd.bindVertexBuffers(0, render_scene.vertex_buffer->buffer, 0ull);
+    cmd.bindIndexBuffer(render_scene.index_buffer->buffer, 0, vk::IndexType::eUint32);
+    render_graph->render(cmd, swapchain_images.at(img), swapchain_views.at(img));
+
+    draw_ui(cmd, swapchain_views.at(img));
+
+    cmd.end();
+    vk::PipelineStageFlags wait_masks[] {
+        vk::PipelineStageFlagBits::eColorAttachmentOutput
+    };
+    graphics_queue.submit(vk::SubmitInfo{fr.swapchain_semaphore, wait_masks, cmd, fr.rendering_semaphore});
+    u32 image_indices[] {img};
+    presentation_queue.presentKHR(vk::PresentInfoKHR{
+        fr.rendering_semaphore, swapchain, image_indices
+    });
+
+
+    /* This waits indefinitely if no query was made */
+    // auto result = device.getQueryPoolResults<u64>(query_pool, 0u, 5u, 5u*sizeof(u64), sizeof(u64), vk::QueryResultFlagBits::e64 | vk::QueryResultFlagBits::eWait).value;
+    // const float to_ms = tick_length * 0.000001f;
+    // float voxelization_time = float(result[1] - result[0]) * to_ms;
+    // float compute_radiance_time = float(result[2] - result[1]) * to_ms;
+    // float radiance_mip_time = float(result[3] - result[2]) * to_ms;
+    // float default_lit_time = float(result[4] - result[3]) * to_ms;
+    // spdlog::info("Vox: {:3.2f}, Rad: {:3.2f}, Mip: {:3.2f} Light: {:3.2f}", voxelization_time, compute_radiance_time, radiance_mip_time, default_lit_time);
+    
+    device.waitIdle();
+
+    for(auto& e : deletion_queue) { e(); }
 }
 
 bool Renderer::initialize_vulkan() {
@@ -701,7 +629,7 @@ bool Renderer::initialize_render_passes() {
             }
         })
         .set_draw_func([this](vk::CommandBuffer cmd) {
-            for(auto& gpum : scene.models) {
+            for(auto& gpum : render_scene.models) {
                 cmd.drawIndexed(gpum.index_count, 1, gpum.index_offset, gpum.vertex_offset, 0);
             }
         });
@@ -811,7 +739,7 @@ bool Renderer::initialize_render_passes() {
         .set_draw_func([&](vk::CommandBuffer cmd) {
             // cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, pp_default_lit.layout.layout, 1, default_lit_set.set, {});
             cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, pp_default_lit.layout.layout, 2, material_set.set, {});
-            for(u32 idx = 0; auto& gpum : scene.models) {
+            for(u32 idx = 0; auto& gpum : render_scene.models) {
                 cmd.drawIndexed(gpum.index_count, 1, gpum.index_offset, gpum.vertex_offset, idx);
                 ++idx;
             }
@@ -833,6 +761,76 @@ bool Renderer::initialize_render_passes() {
     render_graph->bake_graph();
 
     return true;
+}
+
+void Renderer::load_waiting_textures(vk::CommandBuffer cmd) {
+    const auto total_size = std::accumulate(texture_jobs.cbegin(), texture_jobs.cend(), 0ull, [](u64 sum, const TextureUploadJob& job) { return sum + job.image->size(); });
+    
+    if(total_size == 0ull) { return; }
+
+    auto* buffer = create_buffer("texture_upload_job_staging_buffer", vk::BufferUsageFlagBits::eTransferSrc, total_size);
+    auto* buffer_memory = static_cast<std::byte*>(buffer->data);
+
+    std::vector<vk::CopyBufferToImageInfo2> copy_infos; copy_infos.reserve(texture_jobs.size());
+    std::vector<vk::BufferImageCopy2> copy_info_regions; copy_info_regions.reserve(texture_jobs.size());
+    std::vector<vk::ImageMemoryBarrier2> to_dst_barriers; to_dst_barriers.reserve(texture_jobs.size());
+    for(u64 offset=0; const auto& e : texture_jobs) {
+        memcpy(buffer_memory + offset, e.image->data(), e.image->size());
+
+        copy_info_regions.push_back(vk::BufferImageCopy2{
+            offset,
+            e.storage->width,
+            e.storage->height,
+            vk::ImageSubresourceLayers{vk::ImageAspectFlagBits::eColor, 0, 0, 1},
+            vk::Offset3D{0, 0, 0},
+            vk::Extent3D{e.storage->width, e.storage->height, e.storage->depth}
+        });
+
+        copy_infos.push_back(vk::CopyBufferToImageInfo2{
+            buffer->buffer,
+            e.storage->image,
+            vk::ImageLayout::eTransferDstOptimal,
+            copy_info_regions.back()
+        });
+
+        to_dst_barriers.push_back(vk::ImageMemoryBarrier2{
+            vk::PipelineStageFlagBits2::eTopOfPipe,
+            vk::AccessFlagBits2::eNone,
+            vk::PipelineStageFlagBits2::eTransfer,
+            vk::AccessFlagBits2::eTransferWrite,
+            vk::ImageLayout::eUndefined,
+            vk::ImageLayout::eTransferDstOptimal,
+            vk::QueueFamilyIgnored,
+            vk::QueueFamilyIgnored,
+            e.storage->image,
+            vk::ImageSubresourceRange{vk::ImageAspectFlagBits::eColor, 0, vk::RemainingMipLevels, 0, vk::RemainingArrayLayers}
+        });
+
+        offset += e.image->size();
+
+    }
+
+    cmd.pipelineBarrier2(vk::DependencyInfo{{}, {}, {}, to_dst_barriers});
+    for(auto i=0u; i<copy_info_regions.size(); ++i) {
+        cmd.copyBufferToImage2(copy_infos.at(i));
+
+        to_dst_barriers.at(i)
+            .setSrcStageMask(vk::PipelineStageFlagBits2::eTransfer)
+            .setSrcAccessMask(vk::AccessFlagBits2::eTransferWrite)
+            .setDstStageMask(vk::PipelineStageFlagBits2::eFragmentShader)
+            .setDstAccessMask(vk::AccessFlagBits2::eShaderSampledRead)
+            .setOldLayout(vk::ImageLayout::eTransferDstOptimal)
+            .setNewLayout(vk::ImageLayout::eReadOnlyOptimal);
+    }
+
+    cmd.pipelineBarrier2(vk::DependencyInfo{{}, {}, {}, to_dst_barriers});
+
+    deletion_queue.push_back([this, buffer]{
+        destroy_buffer(buffer);
+    });
+
+    spdlog::info("Finished loading {} textures of total size: {}KB", texture_jobs.size(), total_size / 1024u);
+    texture_jobs.clear();
 }
 
 void Renderer::draw_ui(vk::CommandBuffer cmd, vk::ImageView swapchain_view) {
@@ -860,25 +858,25 @@ void Renderer::draw_ui(vk::CommandBuffer cmd, vk::ImageView swapchain_view) {
     ImGui::SetNextWindowPos(ImVec2(window_width - scene_width, 0));
     ImGui::SetNextWindowSize(ImVec2(scene_width, window_height));
     ImGui::Begin("Scene", 0, scene_flags);
-    for(u32 i=0; i<scene.models.size(); ++i) {
-        auto &model = scene.models.at(i);
+    for(u32 i=0; i<render_scene.models.size(); ++i) {
+        auto &model = render_scene.models.at(i);
         if(ImGui::TreeNode(std::format("{}##_{}", model.mesh->name, i).c_str())) {
             if(ImGui::CollapsingHeader("material")) {
                 bool modified = false;
                 ImGui::PushItemWidth(150.0f);
-                modified |= ImGui::SliderFloat("ambient_strength", &model.mesh->material.ambient_color.w, 0.0f, 2.0f);
-                modified |= ImGui::ColorEdit3("ambient_color", &model.mesh->material.ambient_color.x);
-                ImGui::Dummy({1.0f, 5.0f});
-                modified |= ImGui::SliderFloat("diffuse_strength", &model.mesh->material.diffuse_color.w, 0.0f, 2.0f);
-                modified |= ImGui::ColorEdit3("diffuse_color", &model.mesh->material.diffuse_color.x);
-                ImGui::Dummy({1.0f, 5.0f});
-                modified |= ImGui::SliderFloat("specular_strength", &model.mesh->material.specular_color.w, 0.0f, 2.0f);
-                modified |= ImGui::ColorEdit3("specular_color", &model.mesh->material.specular_color.x);
-                ImGui::PopItemWidth();
+                // modified |= ImGui::SliderFloat("ambient_strength", &model.mesh->material.ambient_color.w, 0.0f, 2.0f);
+                // modified |= ImGui::ColorEdit3("ambient_color", &model.mesh->material.ambient_color.x);
+                // ImGui::Dummy({1.0f, 5.0f});
+                // modified |= ImGui::SliderFloat("diffuse_strength", &model.mesh->material.diffuse_color.w, 0.0f, 2.0f);
+                // modified |= ImGui::ColorEdit3("diffuse_color", &model.mesh->material.diffuse_color.x);
+                // ImGui::Dummy({1.0f, 5.0f});
+                // modified |= ImGui::SliderFloat("specular_strength", &model.mesh->material.specular_color.w, 0.0f, 2.0f);
+                // modified |= ImGui::ColorEdit3("specular_color", &model.mesh->material.specular_color.x);
+                // ImGui::PopItemWidth();
 
                 if(modified) {
-                    Material* materials = (Material*)scene.material_buffer->data;
-                    memcpy(&materials[i], &model.mesh->material, sizeof(Material));
+                    // Material* materials = (Material*)scene.material_buffer->data;
+                    // memcpy(&materials[i], &model.mesh->material, sizeof(Material));
                 }
             }
             ImGui::TreePop();

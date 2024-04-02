@@ -10,15 +10,11 @@
 #include <vk_mem_alloc.h>
 #include <stb/stb_include.h>
 #include <glm/glm.hpp>
-#include <vector>
-#include <string>
-#include <format>
-#include <array>
-#include <stack>
-#include <cstdio>
 
 int main() {
     auto& ctx = get_context();
+    ctx.scene = new Scene{};
+    ctx.camera = new Camera{};
     ctx.input = new Input{};
     ctx.renderer = new Renderer{};
 
@@ -30,12 +26,19 @@ int main() {
         return -1;
     }
 
-    r.load_model_from_file("gi_box", "data/models/gi_box.gltf");    
+    ctx.scene->add_model("gi_box", "data/models/gi_box.gltf");    
+    ctx.scene->add_model("sponza", "data/models/Sponza.gltf");    
     r.setup_scene();
 
     glfwSetKeyCallback(r.window, [](GLFWwindow* window, int key, int scancode, int action, int mods) {
         get_context().input->glfw_key_callback(key, action);
     });
 
-    r.render();
+    while(!glfwWindowShouldClose(r.window)) {
+        r.render();
+
+        ctx.camera->update();
+        get_context().input->update();
+        glfwPollEvents();
+    }
 }

@@ -38,8 +38,7 @@ const vec3 DIFFUSE_CONE_DIRECTIONS_16[16] = {
     vec3( 0.182696, -0.388844,  0.903007 )
 };
 
-const vec3 diffuseConeDirections[] =
-{
+const vec3 diffuseConeDirections[] = {
     vec3(0.0f, 1.0f, 0.0f),
     vec3(0.0f, 0.5f, 0.866025f),
     vec3(0.823639f, 0.5f, 0.267617f),
@@ -48,8 +47,7 @@ const vec3 diffuseConeDirections[] =
     vec3(-0.823639f, 0.5f, 0.267617f)
 };
 
-const float diffuseConeWeights[] =
-{
+const float diffuseConeWeights[] = {
     PI / 4.0f,
     3.0f * PI / 20.0f,
     3.0f * PI / 20.0f,
@@ -265,4 +263,5 @@ void main() {
     // outColor = vec4(pow(final, vec3(1.0/2.2)), 1.0);
     // final = specular.rgb * specular.a;
     outColor = vec4(final, 1.0);
+    outColor = vec4(albedo, 1.0);
 }

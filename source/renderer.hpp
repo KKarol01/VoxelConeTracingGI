@@ -3,6 +3,7 @@
 #include "renderer_types.hpp"
 #include "context.hpp"
 #include "input.hpp"
+#include "scene.hpp"
 #include <vk_mem_alloc.h>
 #include <vulkan/vulkan.hpp>
 #include <GLFW/glfw3.h>
@@ -12,45 +13,27 @@
 #include <filesystem>
 #include <array>
 #include <unordered_map>
+#include <memory>
 
 class RenderGraph;
 
-struct Vertex {
-    glm::vec3 position;
-    glm::vec3 normal;
-    glm::vec3 color;
-};
-
-struct alignas(16) Material {
-    glm::vec4 ambient_color{0.0f};
-    glm::vec4 diffuse_color{1.0f};
-    glm::vec4 specular_color{1.0f};
-};
-
-struct Mesh {
-    std::string name;
-    Material material;
-    std::vector<Vertex> vertices;
-    std::vector<u32> indices;
-};
-
-struct Model {
-    std::vector<Mesh> meshes;
-};
-
 struct GpuMesh {
-    Mesh* mesh;
+    const Mesh* mesh;
     u32 vertex_offset, vertex_count;
     u32 index_offset, index_count;
 };
 
-struct Scene {
+struct GpuScene {
     std::vector<GpuMesh> models;
     GpuBuffer* vertex_buffer;
     GpuBuffer* index_buffer;
-    GpuBuffer* material_buffer;
+    // GpuBuffer* material_buffer;
 };
 
+struct TextureUploadJob {
+    TextureStorage* storage;
+    std::shared_ptr<std::vector<std::byte>> image;
+};
 
 template<typename VkObject> struct VulkanObjectType;
 template<> struct VulkanObjectType<vk::SwapchainKHR> { static inline constexpr vk::ObjectType type = vk::ObjectType::eSwapchainKHR; };
@@ -72,8 +55,6 @@ template<typename T> void set_debug_name(vk::Device device, T object, std::strin
 class Renderer {
 public:
     bool initialize();
-
-    bool load_model_from_file(std::string_view name, const std::filesystem::path& path);
 
     void setup_scene();
 
@@ -104,12 +85,44 @@ public:
         return &ts;
     }
 
+    TextureStorage* create_texture_storage(const vk::ImageCreateInfo& image_info, std::shared_ptr<std::vector<std::byte>> data) {
+        VmaAllocationCreateInfo alloc_info = {};
+        alloc_info.usage = VMA_MEMORY_USAGE_AUTO;
+        
+        VkImage image;
+        VmaAllocation alloc;
+        VmaAllocationInfo alloc_i;
+        vmaCreateImage(vma, (VkImageCreateInfo*)&image_info, &alloc_info, &image, &alloc, &alloc_i);
+
+        texture_storages.push_back(new TextureStorage{});
+        auto& ts = *texture_storages.back();
+        ts.type = image_info.imageType;
+        ts.width = image_info.extent.width;
+        ts.height = image_info.extent.height;
+        ts.depth = image_info.extent.depth;
+        ts.mips = image_info.mipLevels;
+        ts.layers = image_info.arrayLayers;
+        ts.format = image_info.format;
+        ts.current_layout = vk::ImageLayout::eUndefined;
+        ts.image = image;
+        ts.alloc = alloc;
+
+        texture_jobs.push_back(TextureUploadJob{
+            .storage = &ts,
+            .image = data
+        });
+
+        return &ts;
+    }
+
 private:
     bool initialize_vulkan();
     bool initialize_swapchain();
     bool initialize_frame_resources();
     bool initialize_imgui();
     bool initialize_render_passes();
+
+    void load_waiting_textures(vk::CommandBuffer cmd);
 
     void draw_ui(vk::CommandBuffer cmd, vk::ImageView swapchain_view);
 
@@ -139,6 +152,44 @@ private:
         set_debug_name(device, buffers.back()->buffer, label);
 
         return buffers.back();
+    }
+
+    GpuBuffer* create_buffer(std::string_view label, vk::BufferUsageFlags usage, u64 size_bytes) {
+        vk::BufferCreateInfo buffer_info{
+            {},
+            size_bytes,
+            usage
+        };
+        VmaAllocationCreateInfo alloc_info = {};
+        alloc_info.usage = VMA_MEMORY_USAGE_AUTO;
+        alloc_info.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT;
+
+        VkBuffer buffer;
+        VmaAllocation alloc;
+        VmaAllocationInfo alloc_i;
+        vmaCreateBuffer(vma, (VkBufferCreateInfo*)&buffer_info, &alloc_info, &buffer, &alloc, &alloc_i);
+
+        buffers.push_back(new GpuBuffer{
+            .buffer = buffer,
+            .data = alloc_i.pMappedData,
+            .size = size_bytes,
+            .alloc = alloc
+        });
+        set_debug_name(device, buffers.back()->buffer, label);
+
+        return buffers.back();
+    }
+
+    void destroy_buffer(GpuBuffer* buffer) {
+        auto idx = 0ull;
+        for(auto e : buffers) { 
+            if(buffer == e) {
+                vmaDestroyBuffer(vma, e->buffer, e->alloc);
+                buffers.erase(buffers.begin() + idx);
+                return;
+            }
+            ++idx;
+        }
     }
 
     FrameResources& get_frame_res() { return frames.at(frame_number % FRAMES_IN_FLIGHT); }
@@ -196,10 +247,9 @@ public:
     float tick_length;
     
     RenderGraph* render_graph; 
-    
-    std::unordered_map<std::string, Model> models;
-    Scene scene;
-    Camera camera;
+    GpuScene render_scene;
+    std::vector<TextureUploadJob> texture_jobs;
+    std::vector<std::function<void()>> deletion_queue;
 };
 
 template<typename T> void set_debug_name(vk::Device device, T object, std::string_view name) {

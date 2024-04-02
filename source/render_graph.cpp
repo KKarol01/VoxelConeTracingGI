@@ -360,7 +360,7 @@ void RenderGraph::bake_graph() {
     }
     passes = std::move(flat_resources);
 
-    #if 1
+    #if 0
     for(auto stage=0u,offset=0u; auto c : stage_pass_counts) {
         spdlog::debug("stage: {}", stage);
 

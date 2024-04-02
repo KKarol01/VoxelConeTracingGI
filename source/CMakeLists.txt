@@ -12,6 +12,7 @@ add_executable(vxgi
     input.cpp
     render_graph.cpp
     pipelines.cpp
+    scene.cpp
 )
 
 target_compile_options(vxgi

@@ -4,6 +4,7 @@
 #include <vk_mem_alloc.h>
 #include <vector>
 #include <array>
+#include <filesystem>
 
 enum class DescriptorType {
     SampledImage, StorageImage, Sampler, UniformBuffer, StorageBuffer, CombinedImageSampler
@@ -118,7 +119,9 @@ struct TextureStorage {
 struct Texture2D {
     Texture2D() = default;
     Texture2D(u32 width, u32 height, vk::Format format, u32 mips, vk::ImageUsageFlags usage); 
-
+    Texture2D(u32 width, u32 height, vk::Format format, u32 mips, vk::ImageUsageFlags usage, std::shared_ptr<std::vector<std::byte>> data); 
+    Texture2D(const std::filesystem::path& path);
+    
     TextureStorage* storage{};
 };
 
