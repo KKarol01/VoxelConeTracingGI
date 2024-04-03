@@ -37,6 +37,7 @@ public:
 private:
     friend class Renderer;
 
+    DescriptorSet set;
     std::vector<Model> models;
     std::unordered_map<std::filesystem::path, Texture2D> material_textures;
 };

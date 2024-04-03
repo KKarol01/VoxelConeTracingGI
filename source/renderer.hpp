@@ -52,6 +52,35 @@ template<> struct VulkanObjectType<vk::ImageView> { static inline constexpr vk::
 
 template<typename T> void set_debug_name(vk::Device device, T object, std::string_view name);
 
+inline vk::ImageViewType to_vk_view_type(vk::ImageType type) {
+    switch (type) {
+        case vk::ImageType::e1D: { return vk::ImageViewType::e1D; }
+        case vk::ImageType::e2D: { return vk::ImageViewType::e2D; }
+        case vk::ImageType::e3D: { return vk::ImageViewType::e3D; }
+        default: {
+            spdlog::error("Unrecognized ImageType: {}", (u32)type);
+            std::terminate();
+        }
+    }
+}
+
+inline vk::ImageAspectFlags deduce_vk_image_aspect(vk::Format format) {
+    switch(format) {
+        case vk::Format::eD16Unorm:
+        case vk::Format::eD32Sfloat: {
+            return vk::ImageAspectFlagBits::eDepth;
+        }
+        case vk::Format::eD16UnormS8Uint:
+        case vk::Format::eD24UnormS8Uint:
+        case vk::Format::eD32SfloatS8Uint: {
+            return vk::ImageAspectFlagBits::eDepth | vk::ImageAspectFlagBits::eStencil;
+        }
+        default: {
+            return vk::ImageAspectFlagBits::eColor;
+        }
+    }
+}
+
 class Renderer {
 public:
     bool initialize();
@@ -81,6 +110,13 @@ public:
         ts.current_layout = vk::ImageLayout::eUndefined;
         ts.image = image;
         ts.alloc = alloc;
+        ts.default_view = device.createImageView(vk::ImageViewCreateInfo{{}, 
+            ts.image,
+            to_vk_view_type(ts.type),
+            ts.format,
+            {},
+            vk::ImageSubresourceRange{deduce_vk_image_aspect(ts.format), 0, ts.mips, 0, ts.layers}
+        });
 
         return &ts;
     }
@@ -106,6 +142,13 @@ public:
         ts.current_layout = vk::ImageLayout::eUndefined;
         ts.image = image;
         ts.alloc = alloc;
+        ts.default_view = device.createImageView(vk::ImageViewCreateInfo{{}, 
+            ts.image,
+            to_vk_view_type(ts.type),
+            ts.format,
+            {},
+            vk::ImageSubresourceRange{deduce_vk_image_aspect(ts.format), 0, ts.mips, 0, ts.layers}
+        });
 
         texture_jobs.push_back(TextureUploadJob{
             .storage = &ts,

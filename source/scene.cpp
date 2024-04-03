@@ -23,7 +23,7 @@ static Texture2D* get_asset_texture(const fastgltf::Asset* asset, u64 texture_in
             auto shared_memory = std::make_shared<std::vector<std::byte>>(image, image + x*y*4);
             return &cache.insert({
                 name,
-                Texture2D{(u32)x, (u32)y, vk::Format::eR8G8B8A8Unorm, (u32)std::log2f(std::min(x, y)) + 1, vk::ImageUsageFlagBits::eColorAttachment | vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eTransferSrc, shared_memory}
+                Texture2D{(u32)x, (u32)y, vk::Format::eR8G8B8A8Unorm, (u32)std::log2f(std::min(x, y)) + 1, vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eTransferSrc, shared_memory}
             }).first->second;
         }
     }, image.data);

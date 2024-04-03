@@ -39,6 +39,7 @@ struct DescriptorInfo {
 struct DescriptorSet {
     DescriptorSet() = default;
     DescriptorSet(vk::Device device, vk::DescriptorPool pool, vk::DescriptorSetLayout layout);
+    DescriptorSet(vk::DescriptorSet set): set(set) {}
 
     void update_bindings(vk::Device device, u32 dst_binding, u32 dst_arr_element, std::span<DescriptorInfo> infos);
     
@@ -114,6 +115,7 @@ struct TextureStorage {
     vk::Image image;
     vk::ImageAspectFlags aspect;
     VmaAllocation alloc;
+    vk::ImageView default_view;
 };
 
 struct Texture2D {

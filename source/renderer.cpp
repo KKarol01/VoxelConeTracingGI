@@ -276,7 +276,10 @@ bool Renderer::initialize_vulkan() {
     desc_idx_features.descriptorBindingVariableDescriptorCount = true;
     desc_idx_features.descriptorBindingPartiallyBound = true;
     desc_idx_features.shaderSampledImageArrayNonUniformIndexing = true;
+    desc_idx_features.shaderStorageImageArrayNonUniformIndexing = true;
     desc_idx_features.descriptorBindingSampledImageUpdateAfterBind = true;
+    desc_idx_features.descriptorBindingStorageImageUpdateAfterBind = true;
+    desc_idx_features.runtimeDescriptorArray = true;
     features.features.fragmentStoresAndAtomics = true;
     features.features.geometryShader = true;
 
@@ -459,10 +462,19 @@ bool Renderer::initialize_render_passes() {
 
     vk::DescriptorSetLayoutBinding material_set_bindings[] {
         vk::DescriptorSetLayoutBinding{0, vk::DescriptorType::eStorageBuffer, 1, all_stages},
+        vk::DescriptorSetLayoutBinding{1, vk::DescriptorType::eSampledImage, 128, all_stages},
     };
 
     vk::DescriptorSetLayoutCreateInfo global_set_info{{}, global_set_bindings};
-    vk::DescriptorSetLayoutCreateInfo material_info{{}, material_set_bindings};
+
+    vk::DescriptorBindingFlags material_info_binding_flags[] {
+        {},
+        vk::DescriptorBindingFlagBits::eVariableDescriptorCount | vk::DescriptorBindingFlagBits::ePartiallyBound
+    };
+    vk::DescriptorSetLayoutBindingFlagsCreateInfo material_info_flags{
+        material_info_binding_flags   
+    };
+    vk::DescriptorSetLayoutCreateInfo material_info{{}, material_set_bindings, &material_info_flags};
 
     vk::DescriptorPoolSize global_sizes[] {
         vk::DescriptorPoolSize{vk::DescriptorType::eSampler, 1024},
@@ -473,7 +485,9 @@ bool Renderer::initialize_render_passes() {
         vk::DescriptorPoolSize{vk::DescriptorType::eCombinedImageSampler, 10},
     };
     global_desc_pool = device.createDescriptorPool(vk::DescriptorPoolCreateInfo{
-        {}, 1024, global_sizes
+        {},
+        1024,
+        global_sizes
     });
     set_debug_name(device, global_desc_pool, "global_pool");
 
@@ -484,7 +498,17 @@ bool Renderer::initialize_render_passes() {
     set_debug_name(device, material_set_layout, "material_set_layout");
 
     global_set = DescriptorSet{device, global_desc_pool, global_set_layout};
-    material_set = DescriptorSet{device, global_desc_pool, material_set_layout};
+
+    u32 material_desc_counts[]{
+        128
+    };
+    vk::DescriptorSetVariableDescriptorCountAllocateInfo material_variable_alloc_info{material_desc_counts};
+    auto material_vk_set = device.allocateDescriptorSets(vk::DescriptorSetAllocateInfo{
+        global_desc_pool,
+        material_set_layout,
+        &material_variable_alloc_info
+    })[0];
+    material_set = DescriptorSet{material_vk_set};
 
     voxel_albedo = Texture3D{256, 256, 256, vk::Format::eR32Uint, 1, vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eTransferSrc | vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled};
     set_debug_name(device, voxel_albedo.storage->image, "voxel_albedo");
@@ -774,8 +798,11 @@ void Renderer::load_waiting_textures(vk::CommandBuffer cmd) {
     std::vector<vk::CopyBufferToImageInfo2> copy_infos; copy_infos.reserve(texture_jobs.size());
     std::vector<vk::BufferImageCopy2> copy_info_regions; copy_info_regions.reserve(texture_jobs.size());
     std::vector<vk::ImageMemoryBarrier2> to_dst_barriers; to_dst_barriers.reserve(texture_jobs.size());
+    std::vector<vk::DescriptorImageInfo> desc_img_infos; desc_img_infos.reserve(texture_jobs.size());
     for(u64 offset=0; const auto& e : texture_jobs) {
         memcpy(buffer_memory + offset, e.image->data(), e.image->size());
+
+        e.storage->current_layout = vk::ImageLayout::eReadOnlyOptimal;
 
         copy_info_regions.push_back(vk::BufferImageCopy2{
             offset,
@@ -806,8 +833,13 @@ void Renderer::load_waiting_textures(vk::CommandBuffer cmd) {
             vk::ImageSubresourceRange{vk::ImageAspectFlagBits::eColor, 0, vk::RemainingMipLevels, 0, vk::RemainingArrayLayers}
         });
 
-        offset += e.image->size();
+        desc_img_infos.push_back(vk::DescriptorImageInfo{
+            {},
+            e.storage->default_view, 
+            vk::ImageLayout::eReadOnlyOptimal
+        });
 
+        offset += e.image->size();
     }
 
     cmd.pipelineBarrier2(vk::DependencyInfo{{}, {}, {}, to_dst_barriers});
@@ -824,6 +856,8 @@ void Renderer::load_waiting_textures(vk::CommandBuffer cmd) {
     }
 
     cmd.pipelineBarrier2(vk::DependencyInfo{{}, {}, {}, to_dst_barriers});
+
+    device.updateDescriptorSets(vk::WriteDescriptorSet{material_set.set, 1, 0, vk::DescriptorType::eSampledImage, desc_img_infos}, {});
 
     deletion_queue.push_back([this, buffer]{
         destroy_buffer(buffer);
