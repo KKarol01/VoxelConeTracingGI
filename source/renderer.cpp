@@ -16,6 +16,16 @@ VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE
 #include <slang/slang.h>
 #include <slang/slang-com-ptr.h>
 
+Handle<TextureStorage> RendererAllocator::create_texture_storage(std::string_view label, const vk::ImageCreateInfo& info, u64 size_bytes, const void* optional_data) {
+    auto* texture = create_texture_ptr(label, info);
+    if(!texture) { return {}; }
+
+    if(size_bytes == 0ull || !optional_data) { return *texture; }
+
+    jobs.emplace_back(*texture, size_bytes, optional_data);
+    return *texture;
+}
+
 Handle<GpuBuffer> RendererAllocator::create_buffer(std::string_view label, vk::BufferUsageFlags usage, bool map_memory, u64 size_bytes, const void* optional_data) {
     if(size_bytes == 0) { 
         spdlog::warn("Requested buffer ({}) size is 0. This is probably a bug.", label);
@@ -25,15 +35,12 @@ Handle<GpuBuffer> RendererAllocator::create_buffer(std::string_view label, vk::B
     auto* buffer = create_buffer_ptr(label, usage, map_memory, size_bytes);
     if(!buffer) { return {}; }
 
-    if(!optional_data) { return *buffer; }
+    if(size_bytes == 0ull || !optional_data) { return *buffer; }
 
     if(map_memory && buffer->data) {
         memcpy(buffer->data, optional_data, size_bytes);
     } else {
-        auto& job = jobs.emplace_back();
-        job.storage = *buffer;
-        job.data.resize(size_bytes);
-        std::memcpy(job.data.data(), optional_data, size_bytes);
+        jobs.emplace_back(*buffer, size_bytes, optional_data);
     }
 
     return *buffer;
@@ -71,6 +78,44 @@ GpuBuffer* RendererAllocator::create_buffer_ptr(std::string_view label, vk::Buff
     set_debug_name(device, b.buffer, label);
 
     return &b;
+}
+
+TextureStorage* RendererAllocator::create_texture_ptr(std::string_view label, const vk::ImageCreateInfo& info) {
+    VmaAllocationCreateInfo alloc_info = {};
+    alloc_info.usage = VMA_MEMORY_USAGE_AUTO;
+    
+    VkImage image;
+    VmaAllocation alloc;
+    VmaAllocationInfo alloc_i;
+    if(VK_SUCCESS != vmaCreateImage(vma, (VkImageCreateInfo*)&info, &alloc_info, &image, &alloc, &alloc_i)) {
+        return nullptr;
+    }
+
+    auto& texture = textures.emplace_back(
+        info.imageType,
+        info.extent.width,
+        info.extent.height,
+        info.extent.depth,
+        info.mipLevels,
+        info.arrayLayers,
+        info.format,
+        vk::ImageLayout::eUndefined,
+        image,
+        alloc,
+        get_context().renderer->device.createImageView(vk::ImageViewCreateInfo{
+            {}, 
+            image,
+            to_vk_view_type(info.imageType),
+            info.format,
+            {},
+            vk::ImageSubresourceRange{deduce_vk_image_aspect(info.format), 0, info.mipLevels, 0, info.arrayLayers}
+        })
+    );
+
+    set_debug_name(device, texture.image, label);
+    set_debug_name(device, texture.default_view, std::format("{}_default_view", label));
+
+    return &texture;
 }
 
 DescriptorSet::DescriptorSet(vk::Device device, vk::DescriptorPool pool, vk::DescriptorSetLayout layout) {
@@ -125,6 +170,8 @@ Texture2D::Texture2D(std::string_view label, u32 width, u32 height, vk::Format f
         size_bytes, 
         optional_data)) { }
 
+TextureStorage* Texture2D::operator->() { return &get_context().renderer->allocator->get_texture(storage); }
+
 Texture3D::Texture3D(std::string_view label, u32 width, u32 height, u32 depth, vk::Format format, u32 mips, vk::ImageUsageFlags usage) 
     : storage(get_context().renderer->allocator->create_texture_storage(
         label,
@@ -140,50 +187,7 @@ Texture3D::Texture3D(std::string_view label, u32 width, u32 height, u32 depth, v
             usage
         })) { }
 
-std::optional<TextureStorage*> RendererTextureStorage::create_texture_storage(const vk::ImageCreateInfo& info, std::shared_ptr<std::vector<std::byte>> optional_data) {
-    auto& renderer = *get_context().renderer;
-    
-    VmaAllocationCreateInfo alloc_info = {};
-    alloc_info.usage = VMA_MEMORY_USAGE_AUTO;
-    
-    VkImage image;
-    VmaAllocation alloc;
-    VmaAllocationInfo alloc_i;
-    
-    if(VK_SUCCESS != vmaCreateImage(renderer.vma, (VkImageCreateInfo*)&info, &alloc_info, &image, &alloc, &alloc_i)) {
-        return std::nullopt;
-    }
-
-    textures.push_back(new TextureStorage{});
-    auto& ts = *textures.back();
-    ts.type = info.imageType;
-    ts.width = info.extent.width;
-    ts.height = info.extent.height;
-    ts.depth = info.extent.depth;
-    ts.mips = info.mipLevels;
-    ts.layers = info.arrayLayers;
-    ts.format = info.format;
-    ts.current_layout = vk::ImageLayout::eUndefined;
-    ts.image = image;
-    ts.alloc = alloc;
-    ts.default_view = renderer.device.createImageView(vk::ImageViewCreateInfo{
-        {}, 
-        ts.image,
-        to_vk_view_type(ts.type),
-        ts.format,
-        {},
-        vk::ImageSubresourceRange{deduce_vk_image_aspect(ts.format), 0, ts.mips, 0, ts.layers}
-    });
-
-    if(optional_data) {
-        renderer.texture_jobs.push_back(TextureUploadJob{
-            .storage = &ts,
-            .image = optional_data
-        });
-    }
-
-    return &ts;
-}
+TextureStorage* Texture3D::operator->() { return &get_context().renderer->allocator->get_texture(storage); }
 
 bool Renderer::initialize() {
     if(!glfwInit()) {
@@ -232,8 +236,6 @@ void Renderer::setup_scene() {
     material_textures.reserve(scene.material_textures.size());
     std::vector<GpuInstancedMesh> instanced_meshes;
 
-    
-    // const auto find_gpu_model = [&gpu_models = render_scene.models](Handle<Model> model) { return std::lower_bound(gpu_models.begin(), gpu_models.end(), model, [](const auto& e, auto handle) { return handle == e.model; }); };
     const auto add_or_get_material_texture = [&](const Texture2D& tex) {
         if(!tex) { return 0ull; }
 
@@ -315,7 +317,6 @@ void Renderer::setup_scene() {
     }
 
     std::unordered_map<Handle<Model>, u32> parsed_gpu_model_instances;
-    instanced_meshes.clear();
     instanced_meshes.resize(total_instanced_meshes);
     for(const auto& e : scene.scene_models) {
         GpuModel previous_gpu_model;
@@ -328,11 +329,12 @@ void Renderer::setup_scene() {
             return previous_gpu_model.offset_to_gpu_meshes + model_instance_counts.at(previous_gpu_model.model) * scene.get_model(previous_gpu_model.model).meshes.size();
         }();
 
-        for(const auto& f : scene.get_model(e.model).meshes) {
-            const auto instanced_mesh_idx = instanced_meshes_offset + parsed_gpu_model_instances[e.model];
+        for(u64 idx = 0u; const auto& f : scene.get_model(e.model).meshes) {
+            const auto instanced_mesh_idx = instanced_meshes_offset + parsed_gpu_model_instances[e.model] + idx;
             auto& instanced_mesh = instanced_meshes.at(instanced_mesh_idx); 
             instanced_mesh.diffuse_texture_idx = add_or_get_material_texture(f.material.diffuse_texture);
             instanced_mesh.normal_texture_idx = add_or_get_material_texture(f.material.normal_texture);
+            ++idx;
         }
         ++parsed_gpu_model_instances[e.model];
     }
@@ -539,6 +541,7 @@ bool Renderer::initialize_frame_resources() {
 
     return true;
 }
+
 bool Renderer::initialize_imgui() {
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
@@ -562,7 +565,7 @@ bool Renderer::initialize_imgui() {
     init_info.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
     init_info.UseDynamicRendering = true;
     init_info.PipelineRenderingCreateInfo = vk::PipelineRenderingCreateInfo{
-        0, swapchain_format, depth_texture.storage->format
+        0, swapchain_format, depth_texture->format
     };
 
     ImGui_ImplVulkan_LoadFunctions([](const char* function_name, void* user_data) {
@@ -669,22 +672,10 @@ bool Renderer::initialize_render_passes() {
     })[0];
     material_set = DescriptorSet{material_vk_set};
 
-    voxel_albedo = Texture3D{256, 256, 256, vk::Format::eR32Uint, 1, vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eTransferSrc | vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled};
-    set_debug_name(device, voxel_albedo.storage->image, "voxel_albedo");
-
-    voxel_normal = Texture3D{256, 256, 256, vk::Format::eR32Uint, 1, vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eTransferSrc | vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled};
-    set_debug_name(device, voxel_normal.storage->image, "voxel_normal");
-
-    voxel_radiance = Texture3D{256, 256, 256, vk::Format::eR8G8B8A8Unorm, (u32)std::log2f(256.0f)+1, vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eTransferSrc | vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled};
-    set_debug_name(device, voxel_radiance.storage->image, "voxel_radiance");
-
-    depth_texture = Texture2D{window_width, window_height, vk::Format::eD32Sfloat, 1, vk::ImageUsageFlagBits::eDepthStencilAttachment};
-    set_debug_name(device, depth_texture.storage->image, "depth_texture");
-
-    depth_texture_view = device.createImageView(vk::ImageViewCreateInfo{
-        {}, depth_texture.storage->image, vk::ImageViewType::e2D, depth_texture.storage->format, {}, {vk::ImageAspectFlagBits::eDepth, 0, 1, 0, 1}
-    });
-    set_debug_name(device, depth_texture_view, "depth_texture_view");
+    voxel_albedo = Texture3D{"voxel_albedo", 256, 256, 256, vk::Format::eR32Uint, 1, vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eTransferSrc | vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled};
+    voxel_normal = Texture3D{"voxel_normal", 256, 256, 256, vk::Format::eR32Uint, 1, vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eTransferSrc | vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled};
+    voxel_radiance = Texture3D{"voxel_radiance", 256, 256, 256, vk::Format::eR8G8B8A8Unorm, (u32)std::log2f(256.0f)+1, vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eTransferSrc | vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled};
+    depth_texture = Texture2D{"depth_texture", window_width, window_height, vk::Format::eD32Sfloat, 1, vk::ImageUsageFlagBits::eDepthStencilAttachment};
 
     PipelineBuilder default_lit_builder{this};
     pp_default_lit = default_lit_builder

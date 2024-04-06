@@ -93,6 +93,10 @@ inline vk::ImageAspectFlags deduce_vk_image_aspect(vk::Format format) {
 
 class RendererAllocator {
     struct UploadJob {
+        UploadJob(std::variant<Handle<TextureStorage>, Handle<GpuBuffer>> storage, u64 size_bytes, const void* data): storage(storage) {
+            this->data.resize(size_bytes);
+            std::memcpy(this->data.data(), data, size_bytes);
+        }
         std::variant<Handle<TextureStorage>, Handle<GpuBuffer>> storage;
         std::vector<std::byte> data;
     };
@@ -111,6 +115,7 @@ private:
         return *std::lower_bound(storage.begin(), storage.end(), handle);
     }
     GpuBuffer* create_buffer_ptr(std::string_view label, vk::BufferUsageFlags usage, bool map_memory, u64 size_bytes);
+    TextureStorage* create_texture_ptr(std::string_view label, const vk::ImageCreateInfo& info);
 
     vk::Device device;
     VmaAllocator vma;

@@ -122,12 +122,11 @@ struct TextureStorage : Handle<TextureStorage> {
         vk::Format format,
         vk::ImageLayout current_layout,
         vk::Image image,
-        vk::ImageAspectFlags aspect,
         VmaAllocation alloc,
         vk::ImageView default_view)
         : Handle(HandleGenerate), type(type), width(width), height(height), depth(depth),
             mips(mips), layers(layers), format(format), current_layout(current_layout), image(image),
-            aspect(aspect), alloc(alloc), default_view(default_view) {}
+            alloc(alloc), default_view(default_view) {}
     
     vk::ImageType type;
     u32 width, height, depth;
@@ -135,7 +134,6 @@ struct TextureStorage : Handle<TextureStorage> {
     vk::Format format;
     vk::ImageLayout current_layout;
     vk::Image image;
-    vk::ImageAspectFlags aspect;
     VmaAllocation alloc;
     vk::ImageView default_view;
 };
@@ -145,6 +143,7 @@ struct Texture2D {
     Texture2D(std::string_view label, u32 width, u32 height, vk::Format format, u32 mips, vk::ImageUsageFlags usage, u64 size_bytes = 0ull, const void* optional_data = nullptr);
 
     constexpr operator bool() const noexcept { return static_cast<bool>(storage); }
+    TextureStorage* operator->();
     
     Handle<TextureStorage> storage;
 };
@@ -152,6 +151,9 @@ struct Texture2D {
 struct Texture3D {
     constexpr Texture3D() = default;
     Texture3D(std::string_view label, u32 width, u32 height, u32 depth, vk::Format format, u32 mips, vk::ImageUsageFlags usage); 
+
+    constexpr operator bool() const noexcept { return static_cast<bool>(storage); }
+    TextureStorage* operator->();
 
     Handle<TextureStorage> storage;
 };
