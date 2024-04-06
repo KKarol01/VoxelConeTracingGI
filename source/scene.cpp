@@ -7,7 +7,7 @@
 #include <fastgltf/glm_element_traits.hpp>
 #include <stb/stb_image.h>
 
-static Texture2D* get_asset_texture(const fastgltf::Asset* asset, u64 texture_index, std::unordered_map<std::filesystem::path, Texture2D>* cache) {
+static Texture2D* get_asset_texture(const fastgltf::Asset* asset, u64 texture_index, std::unordered_map<std::filesystem::path, Texture2D>* cache, std::vector<const Texture2D*>* tex_ids) {
     const auto& texture = asset->textures.at(texture_index);
     const auto& image = asset->images.at(texture.imageIndex.value()); // watch out for this, should further extensions be enabled.
 
@@ -17,19 +17,20 @@ static Texture2D* get_asset_texture(const fastgltf::Asset* asset, u64 texture_in
 
     return std::visit(fastgltf::visitor{
         [](auto&args) -> Texture2D* { return nullptr; },
-        [&cache = *cache, &name = image.name](const fastgltf::sources::Array& vec) {
+        [&cache = *cache, &tex_ids, &name = image.name](const fastgltf::sources::Array& vec) {
             int x, y, ch;
-            auto image = reinterpret_cast<std::byte*>(stbi_load_from_memory(vec.bytes.data(), vec.bytes.size(), &x, &y, &ch, 4));
-            auto shared_memory = std::make_shared<std::vector<std::byte>>(image, image + x*y*4);
-            return &cache.insert({
+            auto raw_image = reinterpret_cast<std::byte*>(stbi_load_from_memory(vec.bytes.data(), vec.bytes.size(), &x, &y, &ch, 4));
+            auto new_tex = &cache.insert({
                 name,
-                Texture2D{(u32)x, (u32)y, vk::Format::eR8G8B8A8Unorm, (u32)std::log2f(std::min(x, y)) + 1, vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eTransferSrc, shared_memory}
+                Texture2D{std::format("scene_texture_2d_{}", name), (u32)x, (u32)y, vk::Format::eR8G8B8A8Unorm, (u32)std::log2f(std::min(x, y)) + 1, vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eTransferSrc, x*y*4u, raw_image}
             }).first->second;
+            tex_ids->push_back(new_tex);
+            return new_tex;
         }
     }, image.data);
 }
 
-bool Scene::add_model(const std::string& name, const std::filesystem::path& path) {
+Handle<Model> Scene::load_model(const std::filesystem::path& path) {
     fastgltf::Parser parser;
 
     fastgltf::GltfDataBuffer data;
@@ -43,7 +44,7 @@ bool Scene::add_model(const std::string& name, const std::filesystem::path& path
     auto asset = parser.loadGltf(&data, path.parent_path(), options);
     if(auto error = asset.error(); error != fastgltf::Error::None) {
         spdlog::error("fastgltf: Unable to load file: {}", fastgltf::getErrorMessage(error));
-        return false;
+        return Handle<Model>{0ull};
     }
 
     std::stack<const fastgltf::Node*> node_stack;
@@ -52,6 +53,7 @@ bool Scene::add_model(const std::string& name, const std::filesystem::path& path
     }
 
     Model model;
+    model.handle = HandleGenerator<Model>::generate();
 
     while(!node_stack.empty()) {
         auto node = node_stack.top();
@@ -108,15 +110,22 @@ bool Scene::add_model(const std::string& name, const std::filesystem::path& path
 
             const auto& material = asset->materials[primitive.materialIndex.value()];
             if(material.pbrData.baseColorTexture.has_value()) {
-                mesh.material.diffuse_texture = get_asset_texture(&asset.get(), material.pbrData.baseColorTexture->textureIndex, &material_textures);
+                mesh.material.diffuse_texture = get_asset_texture(&asset.get(), material.pbrData.baseColorTexture->textureIndex, &material_textures, &textures_ids);
             }
             if(material.normalTexture.has_value()) {
-                mesh.material.normal_texture = get_asset_texture(&asset.get(), material.normalTexture->textureIndex, &material_textures);
+                mesh.material.normal_texture = get_asset_texture(&asset.get(), material.normalTexture->textureIndex, &material_textures, &textures_ids);
             }
         }
     }
 
     models.push_back(std::move(model));
+    return models.back();
+}
 
-    return true;
+Handle<SceneModel> Scene::add_model(const std::string& name, Handle<Model> model) {
+    return scene_models.emplace_back(name, model);
+}
+
+Model& Scene::get_model(Handle<Model> model) {
+    return *std::find(models.begin(), models.end(), model);
 }

@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <string>
 #include <vector>
+#include <optional>
 
 struct Vertex {
     glm::vec3 position;
@@ -14,8 +15,8 @@ struct Vertex {
 };
 
 struct Material {
-    Texture2D* diffuse_texture{};
-    Texture2D* normal_texture{};
+    Texture2D diffuse_texture{};
+    Texture2D normal_texture{};
 };
 
 struct Mesh {
@@ -25,19 +26,27 @@ struct Mesh {
     Material material;
 };
 
-struct Model {
-    std::string name;
+struct Model : public Handle<Model> {
     std::vector<Mesh> meshes;
+};
+
+struct SceneModel : public Handle<SceneModel> {
+    constexpr SceneModel() = default;
+    SceneModel(const std::string& name, Handle<Model> model): Handle(HandleGenerate), name(name), model(model) {}
+    std::string name;
+    Handle<Model> model;
 };
 
 class Scene {
 public:
-    bool add_model(const std::string& name, const std::filesystem::path& path);
-
+    Handle<Model> load_model(const std::filesystem::path& path);
+    Handle<SceneModel> add_model(const std::string& name, Handle<Model> model);
+    Model& get_model(Handle<Model> model);
+    
 private:
     friend class Renderer;
 
-    DescriptorSet set;
     std::vector<Model> models;
-    std::unordered_map<std::filesystem::path, Texture2D> material_textures;
+    std::vector<SceneModel> scene_models;
+    std::unordered_map<std::filesystem::path, Handle<TextureStorage>> material_textures;
 };

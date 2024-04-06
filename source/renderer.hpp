@@ -14,25 +14,35 @@
 #include <array>
 #include <unordered_map>
 #include <memory>
+#include <optional>
+#include <variant>
 
 class RenderGraph;
 
 struct GpuMesh {
     const Mesh* mesh;
-    u32 vertex_offset, vertex_count;
-    u32 index_offset, index_count;
+    u64 vertex_offset, vertex_count;
+    u64 index_offset, index_count;
+    u64 instance_offset, instance_count;
+};
+
+struct GpuInstancedMesh {
+    u32 diffuse_texture_idx{0};
+    u32 normal_texture_idx{0};
+};
+
+struct GpuModel { 
+    Handle<Model> model;
+    u64 offset_to_gpu_meshes{0};
+    u64 offset_to_instanced_meshes{0};
 };
 
 struct GpuScene {
-    std::vector<GpuMesh> models;
-    GpuBuffer* vertex_buffer;
-    GpuBuffer* index_buffer;
-    // GpuBuffer* material_buffer;
-};
-
-struct TextureUploadJob {
-    TextureStorage* storage;
-    std::shared_ptr<std::vector<std::byte>> image;
+    std::vector<GpuModel> models;
+    std::vector<GpuMesh> meshes;
+    Handle<GpuBuffer> vertex_buffer;
+    Handle<GpuBuffer> index_buffer;
+    Handle<GpuBuffer> instance_buffer;
 };
 
 template<typename VkObject> struct VulkanObjectType;
@@ -81,82 +91,39 @@ inline vk::ImageAspectFlags deduce_vk_image_aspect(vk::Format format) {
     }
 }
 
+class RendererAllocator {
+    struct UploadJob {
+        std::variant<Handle<TextureStorage>, Handle<GpuBuffer>> storage;
+        std::vector<std::byte> data;
+    };
+    
+public:
+    explicit RendererAllocator(vk::Device device, VmaAllocator vma): device(device), vma(vma) {}
+
+    Handle<TextureStorage> create_texture_storage(std::string_view label, const vk::ImageCreateInfo& info, u64 size_bytes = 0ull, const void* optional_data = nullptr);
+    Handle<GpuBuffer> create_buffer(std::string_view label, vk::BufferUsageFlags usage, bool map_memory, u64 size_bytes, const void* optional_data = nullptr);
+
+    TextureStorage& get_texture(Handle<TextureStorage> handle) { return find_with_handle(handle, textures); }
+    GpuBuffer& get_buffer(Handle<GpuBuffer> handle) { return find_with_handle(handle, buffers); }
+
+private:
+    template<typename T> T& find_with_handle(Handle<T> handle, std::vector<T>& storage) {
+        return *std::lower_bound(storage.begin(), storage.end(), handle);
+    }
+    GpuBuffer* create_buffer_ptr(std::string_view label, vk::BufferUsageFlags usage, bool map_memory, u64 size_bytes);
+
+    vk::Device device;
+    VmaAllocator vma;
+    std::vector<TextureStorage> textures;
+    std::vector<GpuBuffer> buffers;
+    std::vector<UploadJob> jobs;
+};
+
 class Renderer {
 public:
     bool initialize();
-
     void setup_scene();
-
     void render();
-
-    TextureStorage* create_texture_storage(const vk::ImageCreateInfo& image_info) {
-        VmaAllocationCreateInfo alloc_info = {};
-        alloc_info.usage = VMA_MEMORY_USAGE_AUTO;
-        
-        VkImage image;
-        VmaAllocation alloc;
-        VmaAllocationInfo alloc_i;
-        vmaCreateImage(vma, (VkImageCreateInfo*)&image_info, &alloc_info, &image, &alloc, &alloc_i);
-
-        texture_storages.push_back(new TextureStorage{});
-        auto& ts = *texture_storages.back();
-        ts.type = image_info.imageType;
-        ts.width = image_info.extent.width;
-        ts.height = image_info.extent.height;
-        ts.depth = image_info.extent.depth;
-        ts.mips = image_info.mipLevels;
-        ts.layers = image_info.arrayLayers;
-        ts.format = image_info.format;
-        ts.current_layout = vk::ImageLayout::eUndefined;
-        ts.image = image;
-        ts.alloc = alloc;
-        ts.default_view = device.createImageView(vk::ImageViewCreateInfo{{}, 
-            ts.image,
-            to_vk_view_type(ts.type),
-            ts.format,
-            {},
-            vk::ImageSubresourceRange{deduce_vk_image_aspect(ts.format), 0, ts.mips, 0, ts.layers}
-        });
-
-        return &ts;
-    }
-
-    TextureStorage* create_texture_storage(const vk::ImageCreateInfo& image_info, std::shared_ptr<std::vector<std::byte>> data) {
-        VmaAllocationCreateInfo alloc_info = {};
-        alloc_info.usage = VMA_MEMORY_USAGE_AUTO;
-        
-        VkImage image;
-        VmaAllocation alloc;
-        VmaAllocationInfo alloc_i;
-        vmaCreateImage(vma, (VkImageCreateInfo*)&image_info, &alloc_info, &image, &alloc, &alloc_i);
-
-        texture_storages.push_back(new TextureStorage{});
-        auto& ts = *texture_storages.back();
-        ts.type = image_info.imageType;
-        ts.width = image_info.extent.width;
-        ts.height = image_info.extent.height;
-        ts.depth = image_info.extent.depth;
-        ts.mips = image_info.mipLevels;
-        ts.layers = image_info.arrayLayers;
-        ts.format = image_info.format;
-        ts.current_layout = vk::ImageLayout::eUndefined;
-        ts.image = image;
-        ts.alloc = alloc;
-        ts.default_view = device.createImageView(vk::ImageViewCreateInfo{{}, 
-            ts.image,
-            to_vk_view_type(ts.type),
-            ts.format,
-            {},
-            vk::ImageSubresourceRange{deduce_vk_image_aspect(ts.format), 0, ts.mips, 0, ts.layers}
-        });
-
-        texture_jobs.push_back(TextureUploadJob{
-            .storage = &ts,
-            .image = data
-        });
-
-        return &ts;
-    }
 
 private:
     bool initialize_vulkan();
@@ -166,74 +133,7 @@ private:
     bool initialize_render_passes();
 
     void load_waiting_textures(vk::CommandBuffer cmd);
-
     void draw_ui(vk::CommandBuffer cmd, vk::ImageView swapchain_view);
-
-    template<typename T> GpuBuffer* create_buffer(std::string_view label, vk::BufferUsageFlags usage, std::span<T> data) {
-        vk::BufferCreateInfo buffer_info{
-            {},
-            (VkDeviceSize)data.size_bytes(),
-            usage
-        };
-        VmaAllocationCreateInfo alloc_info = {};
-        alloc_info.usage = VMA_MEMORY_USAGE_AUTO;
-        alloc_info.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT;
-
-        VkBuffer buffer;
-        VmaAllocation alloc;
-        VmaAllocationInfo alloc_i;
-        vmaCreateBuffer(vma, (VkBufferCreateInfo*)&buffer_info, &alloc_info, &buffer, &alloc, &alloc_i);
-
-        memcpy(alloc_i.pMappedData, data.data(), data.size_bytes());
-
-        buffers.push_back(new GpuBuffer{
-            .buffer = buffer,
-            .data = alloc_i.pMappedData,
-            .size = data.size_bytes(),
-            .alloc = alloc
-        });
-        set_debug_name(device, buffers.back()->buffer, label);
-
-        return buffers.back();
-    }
-
-    GpuBuffer* create_buffer(std::string_view label, vk::BufferUsageFlags usage, u64 size_bytes) {
-        vk::BufferCreateInfo buffer_info{
-            {},
-            size_bytes,
-            usage
-        };
-        VmaAllocationCreateInfo alloc_info = {};
-        alloc_info.usage = VMA_MEMORY_USAGE_AUTO;
-        alloc_info.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT;
-
-        VkBuffer buffer;
-        VmaAllocation alloc;
-        VmaAllocationInfo alloc_i;
-        vmaCreateBuffer(vma, (VkBufferCreateInfo*)&buffer_info, &alloc_info, &buffer, &alloc, &alloc_i);
-
-        buffers.push_back(new GpuBuffer{
-            .buffer = buffer,
-            .data = alloc_i.pMappedData,
-            .size = size_bytes,
-            .alloc = alloc
-        });
-        set_debug_name(device, buffers.back()->buffer, label);
-
-        return buffers.back();
-    }
-
-    void destroy_buffer(GpuBuffer* buffer) {
-        auto idx = 0ull;
-        for(auto e : buffers) { 
-            if(buffer == e) {
-                vmaDestroyBuffer(vma, e->buffer, e->alloc);
-                buffers.erase(buffers.begin() + idx);
-                return;
-            }
-            ++idx;
-        }
-    }
 
     FrameResources& get_frame_res() { return frames.at(frame_number % FRAMES_IN_FLIGHT); }
 
@@ -270,9 +170,6 @@ public:
 
     vk::DescriptorPool global_desc_pool;
     DescriptorSet global_set;
-    // DescriptorSet default_lit_set;
-    // DescriptorSet voxelize_set;
-    // DescriptorSet merge_voxels_set;
     DescriptorSet material_set;
 
     Texture3D voxel_albedo, voxel_normal, voxel_radiance;
@@ -286,12 +183,10 @@ public:
     Pipeline pp_imgui;
     bool recompile_pipelines = false;
 
-    vk::QueryPool query_pool;
-    float tick_length;
-    
-    RenderGraph* render_graph; 
+    RenderGraph* render_graph;
+    RendererAllocator* allocator;
     GpuScene render_scene;
-    std::vector<TextureUploadJob> texture_jobs;
+
     std::vector<std::function<void()>> deletion_queue;
 };
 

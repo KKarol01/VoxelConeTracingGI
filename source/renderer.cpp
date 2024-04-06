@@ -16,6 +16,63 @@ VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE
 #include <slang/slang.h>
 #include <slang/slang-com-ptr.h>
 
+Handle<GpuBuffer> RendererAllocator::create_buffer(std::string_view label, vk::BufferUsageFlags usage, bool map_memory, u64 size_bytes, const void* optional_data) {
+    if(size_bytes == 0) { 
+        spdlog::warn("Requested buffer ({}) size is 0. This is probably a bug.", label);
+        return {};
+    }
+    
+    auto* buffer = create_buffer_ptr(label, usage, map_memory, size_bytes);
+    if(!buffer) { return {}; }
+
+    if(!optional_data) { return *buffer; }
+
+    if(map_memory && buffer->data) {
+        memcpy(buffer->data, optional_data, size_bytes);
+    } else {
+        auto& job = jobs.emplace_back();
+        job.storage = *buffer;
+        job.data.resize(size_bytes);
+        std::memcpy(job.data.data(), optional_data, size_bytes);
+    }
+
+    return *buffer;
+}
+
+GpuBuffer* RendererAllocator::create_buffer_ptr(std::string_view label, vk::BufferUsageFlags usage, bool map_memory, u64 size_bytes) {
+    if(!map_memory) {
+        usage |= vk::BufferUsageFlagBits::eTransferDst;
+    }
+
+    vk::BufferCreateInfo buffer_info{
+        {},
+        (VkDeviceSize)size_bytes,
+        usage
+    };
+
+    VmaAllocationCreateInfo alloc_info = {};
+    alloc_info.usage = VMA_MEMORY_USAGE_AUTO;
+    if(map_memory) { alloc_info.flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT | VMA_ALLOCATION_CREATE_MAPPED_BIT; }    
+
+    VkBuffer buffer;
+    VmaAllocation alloc;
+    VmaAllocationInfo alloc_i;
+    if(VK_SUCCESS != vmaCreateBuffer(vma, (VkBufferCreateInfo*)&buffer_info, &alloc_info, &buffer, &alloc, &alloc_i)) {
+        return nullptr;
+    }
+
+    auto& b = buffers.emplace_back(
+        buffer,
+        alloc_i.pMappedData,
+        size_bytes,
+        alloc
+    );
+
+    set_debug_name(device, b.buffer, label);
+
+    return &b;
+}
+
 DescriptorSet::DescriptorSet(vk::Device device, vk::DescriptorPool pool, vk::DescriptorSetLayout layout) {
     set = device.allocateDescriptorSets(vk::DescriptorSetAllocateInfo{pool, layout})[0];
 }
@@ -51,34 +108,22 @@ void DescriptorSet::update_bindings(vk::Device device, u32 dst_binding, u32 dst_
     device.updateDescriptorSets(writes, {});
 }
 
-Texture2D::Texture2D(u32 width, u32 height, vk::Format format, u32 mips, vk::ImageUsageFlags usage) {
-    storage = get_context().renderer->create_texture_storage(vk::ImageCreateInfo{
-        {},
-        vk::ImageType::e2D,
-        format,
-        {width, height, 1},
-        mips,
-        1,
-        vk::SampleCountFlagBits::e1,
-        vk::ImageTiling::eOptimal,
-        usage
-    });
-}
-
-Texture2D::Texture2D(u32 width, u32 height, vk::Format format, u32 mips, vk::ImageUsageFlags usage, std::shared_ptr<std::vector<std::byte>> data) {
-    storage = get_context().renderer->create_texture_storage(vk::ImageCreateInfo{
-        {},
-        vk::ImageType::e2D,
-        format,
-        {width, height, 1},
-        mips,
-        1,
-        vk::SampleCountFlagBits::e1,
-        vk::ImageTiling::eOptimal,
-        usage
-    },
-    data);
-}
+Texture2D::Texture2D(std::string_view label, u32 width, u32 height, vk::Format format, u32 mips, vk::ImageUsageFlags usage, u64 size_bytes, const void* optional_data) 
+    : storage(get_context().renderer->allocator->create_texture_storage(
+        label,
+        vk::ImageCreateInfo{
+            {},
+            vk::ImageType::e2D,
+            format,
+            {width, height, 1},
+            mips,
+            1,
+            vk::SampleCountFlagBits::e1,
+            vk::ImageTiling::eOptimal,
+            usage
+        }, 
+        size_bytes, 
+        optional_data)) { }
 
 Texture3D::Texture3D(u32 width, u32 height, u32 depth, vk::Format format, u32 mips, vk::ImageUsageFlags usage) {
     storage = get_context().renderer->create_texture_storage(vk::ImageCreateInfo{
@@ -92,6 +137,51 @@ Texture3D::Texture3D(u32 width, u32 height, u32 depth, vk::Format format, u32 mi
         vk::ImageTiling::eOptimal,
         usage
     });
+}
+
+std::optional<TextureStorage*> RendererTextureStorage::create_texture_storage(const vk::ImageCreateInfo& info, std::shared_ptr<std::vector<std::byte>> optional_data) {
+    auto& renderer = *get_context().renderer;
+    
+    VmaAllocationCreateInfo alloc_info = {};
+    alloc_info.usage = VMA_MEMORY_USAGE_AUTO;
+    
+    VkImage image;
+    VmaAllocation alloc;
+    VmaAllocationInfo alloc_i;
+    
+    if(VK_SUCCESS != vmaCreateImage(renderer.vma, (VkImageCreateInfo*)&info, &alloc_info, &image, &alloc, &alloc_i)) {
+        return std::nullopt;
+    }
+
+    textures.push_back(new TextureStorage{});
+    auto& ts = *textures.back();
+    ts.type = info.imageType;
+    ts.width = info.extent.width;
+    ts.height = info.extent.height;
+    ts.depth = info.extent.depth;
+    ts.mips = info.mipLevels;
+    ts.layers = info.arrayLayers;
+    ts.format = info.format;
+    ts.current_layout = vk::ImageLayout::eUndefined;
+    ts.image = image;
+    ts.alloc = alloc;
+    ts.default_view = renderer.device.createImageView(vk::ImageViewCreateInfo{
+        {}, 
+        ts.image,
+        to_vk_view_type(ts.type),
+        ts.format,
+        {},
+        vk::ImageSubresourceRange{deduce_vk_image_aspect(ts.format), 0, ts.mips, 0, ts.layers}
+    });
+
+    if(optional_data) {
+        renderer.texture_jobs.push_back(TextureUploadJob{
+            .storage = &ts,
+            .image = optional_data
+        });
+    }
+
+    return &ts;
 }
 
 bool Renderer::initialize() {
@@ -136,40 +226,119 @@ void Renderer::setup_scene() {
     auto& context = get_context();
     auto& scene = *context.scene;
 
-    u64 num_vertices = 0ull, num_indices = 0ull;
-    for(const auto& model : scene.models) {
-        for(const auto& mesh : model.meshes) {
-            num_vertices += mesh.vertices.size();
-            num_indices += mesh.indices.size();
+    std::unordered_map<const TextureStorage*, u64> texture_indices;
+    std::vector<const TextureStorage*> material_textures{nullptr}; // index 0 reserved for lack of texture
+    material_textures.reserve(scene.material_textures.size());
+    std::vector<GpuInstancedMesh> instanced_meshes;
+
+    
+    // const auto find_gpu_model = [&gpu_models = render_scene.models](Handle<Model> model) { return std::lower_bound(gpu_models.begin(), gpu_models.end(), model, [](const auto& e, auto handle) { return handle == e.model; }); };
+    const auto add_or_get_material_texture = [&](const Texture2D& tex) {
+        if(!tex) { return 0ull; }
+
+        auto& tex_storage = allocator->get_texture(tex.storage);
+        if(texture_indices.contains(&tex_storage)) { return texture_indices.at(&tex_storage); } 
+        texture_indices[&tex_storage] = material_textures.size();
+        material_textures.push_back(&tex_storage);
+        return material_textures.size() - 1ull;
+    };
+
+    const auto model_instance_counts = [&] {
+        std::unordered_map<Handle<Model>, u32> instances;
+        for(const auto& e : scene.scene_models) {
+            ++instances[e.model];
         }
-    }
+        return instances;
+    }();
+    const auto total_instanced_meshes = [&] {
+        u32 count = 0;
+        for(const auto& [handle, instance_count] : model_instance_counts) {
+            const auto& model = scene.get_model(handle);
+            count += instance_count * model.meshes.size();
+        }
+        return count;
+    }();
+    const auto total_meshes = [&scene] { 
+        u32 count = 0;
+        for(const auto& e : scene.models) { count += e.meshes.size(); }
+        return count;
+    }();
+    const auto instanced_models_offsets = [&] {
+        std::unordered_map<Handle<Model>, u64> offsets;
+        for(u64 i=0; i<scene.models.size(); ++i) {
+            const auto& model = scene.models.at(i);
+            if(i==0) { offsets[model] = 0; continue; }
+            offsets[model] = offsets[scene.models.at(i-1)] + model_instance_counts.at(scene.models.at(i-1)) * scene.models.at(i-1).meshes.size();
+        }
+        return offsets;
+    }();
+    const auto [total_vertex_count, total_index_count] = [&] {
+        u64 total_vertex_count = 0, total_index_count = 0;
+        for(const auto& e : scene.models) {
+            for(const auto& f : e.meshes) { 
+                total_vertex_count += f.vertices.size();
+                total_index_count += f.indices.size();
+            }
+        }
+        return std::make_pair(total_vertex_count, total_index_count);
+    }();
 
-    render_scene.vertex_buffer = create_buffer("scene_vertex_buffer", vk::BufferUsageFlagBits::eVertexBuffer, num_vertices * sizeof(Vertex));
-    render_scene.index_buffer = create_buffer("scene_index_buffer", vk::BufferUsageFlagBits::eIndexBuffer, num_indices * sizeof(u32));
-    // render_scene.material_buffer = create_buffer("scene_material_buffer", vk::BufferUsageFlagBits::eStorageBuffer, std::span{materials});
+    std::vector<Vertex> vertices;
+    std::vector<u32> indices;
+    vertices.reserve(total_vertex_count);
+    indices.reserve(total_index_count);
+    
+    render_scene.models.reserve(model_instance_counts.size());
+    render_scene.meshes.reserve(total_meshes);
+    for(u64 offset = 0; const auto& e : scene.models) {
+        render_scene.models.emplace_back(e, offset);
+        offset += e.meshes.size();
 
-    auto* vertex_buffer = static_cast<std::byte*>(render_scene.vertex_buffer->data);
-    auto* index_buffer = static_cast<std::byte*>(render_scene.index_buffer->data);
+        for(const auto& f : e.meshes) {
+            GpuMesh last_mesh{};
+            if(!render_scene.meshes.empty()) { last_mesh = render_scene.meshes.back(); }
 
-    num_vertices = 0ull;
-    num_indices = 0ull; 
-    for(const auto& model : scene.models) {
-        for(const auto& mesh : model.meshes) {
-            render_scene.models.push_back(GpuMesh{
-                .mesh = &mesh,
-                .vertex_offset = (u32)num_vertices,
-                .vertex_count = (u32)mesh.vertices.size(),
-                .index_offset = (u32)num_indices,
-                .index_count = (u32)mesh.indices.size()
+            render_scene.meshes.push_back(GpuMesh{
+                .mesh = &f,
+                .vertex_offset = last_mesh.vertex_offset + last_mesh.vertex_count,
+                .vertex_count = f.vertices.size(),
+                .index_offset = last_mesh.index_offset + last_mesh.index_count,
+                .index_count = f.indices.size(),
+                .instance_offset = last_mesh.instance_offset + last_mesh.index_count,
+                .instance_count = model_instance_counts.at(e)
             });
 
-            memcpy(vertex_buffer + num_vertices * sizeof(Vertex), mesh.vertices.data(), mesh.vertices.size() * sizeof(Vertex));
-            memcpy(index_buffer + num_indices * sizeof(u32), mesh.indices.data(), mesh.indices.size() * sizeof(u32));
-
-            num_vertices += mesh.vertices.size();
-            num_indices += mesh.indices.size();
+            vertices.insert(vertices.end(), f.vertices.begin(), f.vertices.end());
+            indices.insert(indices.end(), f.indices.begin(), f.indices.end());
         }
     }
+
+    std::unordered_map<Handle<Model>, u32> parsed_gpu_model_instances;
+    instanced_meshes.clear();
+    instanced_meshes.resize(total_instanced_meshes);
+    for(const auto& e : scene.scene_models) {
+        GpuModel previous_gpu_model;
+        if(!render_scene.models.empty()) {
+            previous_gpu_model = render_scene.models.back();
+        }
+
+        const auto instanced_meshes_offset = [&] {
+            if(!previous_gpu_model.model) { return 0ull; }
+            return previous_gpu_model.offset_to_gpu_meshes + model_instance_counts.at(previous_gpu_model.model) * scene.get_model(previous_gpu_model.model).meshes.size();
+        }();
+
+        for(const auto& f : scene.get_model(e.model).meshes) {
+            const auto instanced_mesh_idx = instanced_meshes_offset + parsed_gpu_model_instances[e.model];
+            auto& instanced_mesh = instanced_meshes.at(instanced_mesh_idx); 
+            instanced_mesh.diffuse_texture_idx = add_or_get_material_texture(f.material.diffuse_texture);
+            instanced_mesh.normal_texture_idx = add_or_get_material_texture(f.material.normal_texture);
+        }
+        ++parsed_gpu_model_instances[e.model];
+    }
+
+    render_scene.vertex_buffer = allocator->create_buffer("scene_vertex_buffer", vk::BufferUsageFlagBits::eVertexBuffer, false, vertices.size() * sizeof(vertices[0]), vertices.data());
+    render_scene.index_buffer = allocator->create_buffer("scene_index_buffer", vk::BufferUsageFlagBits::eIndexBuffer, false, indices.size() * sizeof(indices[0]), indices.data());
+    render_scene.instance_buffer = allocator->create_buffer("scene_instance_buffer", vk::BufferUsageFlagBits::eStorageBuffer, true, instanced_meshes.size() * sizeof(instanced_meshes[0]), instanced_meshes.data());
 }
 
 void Renderer::render() {
@@ -186,12 +355,6 @@ void Renderer::render() {
     auto img = device.acquireNextImageKHR(swapchain, -1ull, fr.swapchain_semaphore).value;
     
     cmd.begin({vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
-
-    if(!texture_jobs.empty()) {
-        load_waiting_textures(cmd);
-    }
-
-    cmd.resetQueryPool(query_pool, 0, 7);
     cmd.bindVertexBuffers(0, render_scene.vertex_buffer->buffer, 0ull);
     cmd.bindIndexBuffer(render_scene.index_buffer->buffer, 0, vk::IndexType::eUint32);
     render_graph->render(cmd, swapchain_images.at(img), swapchain_views.at(img));
@@ -208,15 +371,13 @@ void Renderer::render() {
         fr.rendering_semaphore, swapchain, image_indices
     });
 
-
-    /* This waits indefinitely if no query was made */
-    // auto result = device.getQueryPoolResults<u64>(query_pool, 0u, 5u, 5u*sizeof(u64), sizeof(u64), vk::QueryResultFlagBits::e64 | vk::QueryResultFlagBits::eWait).value;
-    // const float to_ms = tick_length * 0.000001f;
-    // float voxelization_time = float(result[1] - result[0]) * to_ms;
-    // float compute_radiance_time = float(result[2] - result[1]) * to_ms;
-    // float radiance_mip_time = float(result[3] - result[2]) * to_ms;
-    // float default_lit_time = float(result[4] - result[3]) * to_ms;
-    // spdlog::info("Vox: {:3.2f}, Rad: {:3.2f}, Mip: {:3.2f} Light: {:3.2f}", voxelization_time, compute_radiance_time, radiance_mip_time, default_lit_time);
+    VkDrawIndirectCommand{
+        .firstInstance,
+        .firstVertex,
+        .instanceCount,
+        .vertexCount,
+    }
+    vkCmdDrawIndexedIndirectCount(VkCommandBuffer commandBuffer, VkBuffer buffer, VkDeviceSize offset, VkBuffer countBuffer, VkDeviceSize countBufferOffset, uint32_t maxDrawCount, uint32_t stride)
     
     device.waitIdle();
 
@@ -324,10 +485,7 @@ bool Renderer::initialize_vulkan() {
         .get_device_proc_addr = instance_result->fp_vkGetDeviceProcAddr,
     };
 
-    query_pool = device.createQueryPool(vk::QueryPoolCreateInfo{
-        {}, vk::QueryType::eTimestamp, 7
-    });
-    tick_length = physical_device.getProperties().limits.timestampPeriod;
+    allocator = new RendererAllocator{device, vma};
 
     return true;
 }
@@ -795,10 +953,10 @@ void Renderer::load_waiting_textures(vk::CommandBuffer cmd) {
     auto* buffer = create_buffer("texture_upload_job_staging_buffer", vk::BufferUsageFlagBits::eTransferSrc, total_size);
     auto* buffer_memory = static_cast<std::byte*>(buffer->data);
 
-    std::vector<vk::CopyBufferToImageInfo2> copy_infos; copy_infos.reserve(texture_jobs.size());
-    std::vector<vk::BufferImageCopy2> copy_info_regions; copy_info_regions.reserve(texture_jobs.size());
-    std::vector<vk::ImageMemoryBarrier2> to_dst_barriers; to_dst_barriers.reserve(texture_jobs.size());
-    std::vector<vk::DescriptorImageInfo> desc_img_infos; desc_img_infos.reserve(texture_jobs.size());
+    std::vector<vk::CopyBufferToImageInfo2> copy_infos;     copy_infos.reserve(texture_jobs.size());
+    std::vector<vk::BufferImageCopy2> copy_info_regions;    copy_info_regions.reserve(texture_jobs.size());
+    std::vector<vk::ImageMemoryBarrier2> to_dst_barriers;   to_dst_barriers.reserve(texture_jobs.size());
+    std::vector<vk::DescriptorImageInfo> desc_img_infos;    desc_img_infos.reserve(texture_jobs.size());
     for(u64 offset=0; const auto& e : texture_jobs) {
         memcpy(buffer_memory + offset, e.image->data(), e.image->size());
 

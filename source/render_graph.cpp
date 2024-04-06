@@ -5,6 +5,7 @@
 #include <spdlog/spdlog.h>
 #include <vulkan/vulkan_structs.hpp>
 #include <vulkan/vulkan_to_string.hpp>
+#include <chrono>
 
 static constexpr vk::PipelineStageFlags2 to_vk_pipeline_stage(RGSyncStage stage) {
     switch (stage) {
@@ -262,6 +263,8 @@ RenderGraph::BarrierStages RenderGraph::deduce_stages_and_accesses(const RenderP
 void RenderGraph::bake_graph() {
     using ResourceIndex = u32;
 
+    const auto t1 = std::chrono::steady_clock::now();
+
     std::vector<std::vector<ResourceIndex>> stages;
     std::vector<PassDependencies> stage_dependencies;
     std::unordered_map<RenderPass*, uint32_t> pass_stage;
@@ -359,6 +362,10 @@ void RenderGraph::bake_graph() {
         ++stage_idx;
     }
     passes = std::move(flat_resources);
+
+    const auto t2 = std::chrono::steady_clock::now();
+    const auto dt = std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count();
+    spdlog::info("Baked graph in: {}ns", dt);
 
     #if 0
     for(auto stage=0u,offset=0u; auto c : stage_pass_counts) {

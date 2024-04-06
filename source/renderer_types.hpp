@@ -92,7 +92,11 @@ struct Pipeline {
     PipelineType type{PipelineType::None};
 };
 
-struct GpuBuffer {
+struct GpuBuffer : Handle<GpuBuffer> {
+    constexpr GpuBuffer() = default;
+    GpuBuffer(vk::Buffer buffer, void* data, u64 size, VmaAllocation alloc)
+        : Handle(HandleGenerate), buffer(buffer), data(data), size(size) {}
+
     vk::Buffer buffer;
     void* data;
     u64 size;
@@ -106,7 +110,25 @@ struct FrameResources {
     vk::Fence in_flight_fence;
 };
 
-struct TextureStorage {
+struct TextureStorage : Handle<TextureStorage> {
+    constexpr TextureStorage() = default;
+    TextureStorage(
+        vk::ImageType type,
+        u32 width, 
+        u32 height, 
+        u32 depth,
+        u32 mips, 
+        u32 layers,
+        vk::Format format,
+        vk::ImageLayout current_layout,
+        vk::Image image,
+        vk::ImageAspectFlags aspect,
+        VmaAllocation alloc,
+        vk::ImageView default_view)
+        : Handle(HandleGenerate), type(type), width(width), height(height), depth(depth),
+            mips(mips), layers(layers), format(format), current_layout(current_layout), image(image),
+            aspect(aspect), alloc(alloc), default_view(default_view) {}
+    
     vk::ImageType type;
     u32 width, height, depth;
     u32 mips, layers;
@@ -119,19 +141,19 @@ struct TextureStorage {
 };
 
 struct Texture2D {
-    Texture2D() = default;
-    Texture2D(u32 width, u32 height, vk::Format format, u32 mips, vk::ImageUsageFlags usage); 
-    Texture2D(u32 width, u32 height, vk::Format format, u32 mips, vk::ImageUsageFlags usage, std::shared_ptr<std::vector<std::byte>> data); 
-    Texture2D(const std::filesystem::path& path);
+    constexpr Texture2D() = default;
+    Texture2D(std::string_view label, u32 width, u32 height, vk::Format format, u32 mips, vk::ImageUsageFlags usage, u64 size_bytes = 0ull, const void* optional_data = nullptr);
+
+    constexpr operator bool() const noexcept { return static_cast<bool>(storage); }
     
-    TextureStorage* storage{};
+    Handle<TextureStorage> storage;
 };
 
 struct Texture3D {
-    Texture3D() = default;
+    constexpr Texture3D() = default;
     Texture3D(u32 width, u32 height, u32 depth, vk::Format format, u32 mips, vk::ImageUsageFlags usage); 
 
-    TextureStorage* storage{};
+    Handle<TextureStorage> storage;
 };
 
 struct GLFWwindow;
