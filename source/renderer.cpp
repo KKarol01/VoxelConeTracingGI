@@ -125,19 +125,20 @@ Texture2D::Texture2D(std::string_view label, u32 width, u32 height, vk::Format f
         size_bytes, 
         optional_data)) { }
 
-Texture3D::Texture3D(u32 width, u32 height, u32 depth, vk::Format format, u32 mips, vk::ImageUsageFlags usage) {
-    storage = get_context().renderer->create_texture_storage(vk::ImageCreateInfo{
-        vk::ImageCreateFlagBits::eMutableFormat,
-        vk::ImageType::e3D,
-        format,
-        {width, height, depth},
-        mips,
-        1,
-        vk::SampleCountFlagBits::e1,
-        vk::ImageTiling::eOptimal,
-        usage
-    });
-}
+Texture3D::Texture3D(std::string_view label, u32 width, u32 height, u32 depth, vk::Format format, u32 mips, vk::ImageUsageFlags usage) 
+    : storage(get_context().renderer->allocator->create_texture_storage(
+        label,
+        vk::ImageCreateInfo{
+            vk::ImageCreateFlagBits::eMutableFormat,
+            vk::ImageType::e3D,
+            format,
+            {width, height, depth},
+            mips,
+            1,
+            vk::SampleCountFlagBits::e1,
+            vk::ImageTiling::eOptimal,
+            usage
+        })) { }
 
 std::optional<TextureStorage*> RendererTextureStorage::create_texture_storage(const vk::ImageCreateInfo& info, std::shared_ptr<std::vector<std::byte>> optional_data) {
     auto& renderer = *get_context().renderer;

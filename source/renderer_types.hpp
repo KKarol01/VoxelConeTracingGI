@@ -151,7 +151,7 @@ struct Texture2D {
 
 struct Texture3D {
     constexpr Texture3D() = default;
-    Texture3D(u32 width, u32 height, u32 depth, vk::Format format, u32 mips, vk::ImageUsageFlags usage); 
+    Texture3D(std::string_view label, u32 width, u32 height, u32 depth, vk::Format format, u32 mips, vk::ImageUsageFlags usage); 
 
     Handle<TextureStorage> storage;
 };
