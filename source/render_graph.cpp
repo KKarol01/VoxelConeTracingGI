@@ -421,8 +421,6 @@ void RenderGraph::render(vk::CommandBuffer cmd, vk::Image swapchain_image, vk::I
         dependency_info.setImageMemoryBarriers(image_barriers);
         cmd.pipelineBarrier2(dependency_info);
 
-// #define RG_DEBUG_PRINT
-
         for(u32 i=0; i<dependency_info.imageMemoryBarrierCount; ++i) {
             auto& barrier = dependency_info.pImageMemoryBarriers[i];
 #ifdef RG_DEBUG_PRINT

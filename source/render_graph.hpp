@@ -6,6 +6,10 @@
 #include <map>
 #include <functional>
 
+#if 0
+#define RG_DEBUG_PRINT
+#endif
+
 struct DescriptorSet;
 struct Pipeline;
 struct Texture;
