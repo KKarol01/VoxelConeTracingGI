@@ -421,9 +421,11 @@ void RenderGraph::render(vk::CommandBuffer cmd, vk::Image swapchain_image, vk::I
         dependency_info.setImageMemoryBarriers(image_barriers);
         cmd.pipelineBarrier2(dependency_info);
 
+// #define RG_DEBUG_PRINT
+
         for(u32 i=0; i<dependency_info.imageMemoryBarrierCount; ++i) {
             auto& barrier = dependency_info.pImageMemoryBarriers[i];
-#if 1
+#ifdef RG_DEBUG_PRINT
             spdlog::debug("({}) {}:{} -> {}:{} {} -> {} RNG: {} - {} {} - {}",
                 (u64)(VkImage)barrier.image,
                 vk::to_string(barrier.srcStageMask),
@@ -441,7 +443,9 @@ void RenderGraph::render(vk::CommandBuffer cmd, vk::Image swapchain_image, vk::I
 
         for(u32 i = offset; i < offset + pass_count; ++i) {
             const auto& pass = passes.at(i);
+#ifdef RG_DEBUG_PRINT
             spdlog::debug("{}", pass.name);
+#endif
 
             if(pass.pipeline) {
                 auto* renderer = get_context().renderer;
