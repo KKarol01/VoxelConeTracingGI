@@ -16,31 +16,31 @@ VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE
 #include <slang/slang.h>
 #include <slang/slang-com-ptr.h>
 
-Handle<TextureStorage> RendererAllocator::create_texture_storage(std::string_view label, const vk::ImageCreateInfo& info, u64 size_bytes, const void* optional_data) {
+Handle<TextureStorage> RendererAllocator::create_texture_storage(std::string_view label, const vk::ImageCreateInfo& info, std::span<const std::byte> optional_data) {
     auto* texture = create_texture_ptr(label, info);
     if(!texture) { return {}; }
 
-    if(size_bytes == 0ull || !optional_data) { return *texture; }
+    if(optional_data.size_bytes() == 0ull) { return *texture; }
 
-    jobs.emplace_back(*texture, size_bytes, optional_data);
+    jobs.emplace_back(*texture, optional_data);
     return *texture;
 }
 
-Handle<GpuBuffer> RendererAllocator::create_buffer(std::string_view label, vk::BufferUsageFlags usage, bool map_memory, u64 size_bytes, const void* optional_data) {
-    if(size_bytes == 0) { 
+Handle<GpuBuffer> RendererAllocator::create_buffer(std::string_view label, vk::BufferUsageFlags usage, bool map_memory, std::span<const std::byte> optional_data) {
+    if(optional_data.size_bytes() == 0) { 
         spdlog::warn("Requested buffer ({}) size is 0. This is probably a bug.", label);
         return {};
     }
     
-    auto* buffer = create_buffer_ptr(label, usage, map_memory, size_bytes);
+    auto* buffer = create_buffer_ptr(label, usage, map_memory, optional_data.size_bytes());
     if(!buffer) { return {}; }
 
-    if(size_bytes == 0ull || !optional_data) { return *buffer; }
+    if(optional_data.size_bytes() == 0ull) { return *buffer; }
 
     if(map_memory && buffer->data) {
-        memcpy(buffer->data, optional_data, size_bytes);
+        memcpy(buffer->data, optional_data.data(), optional_data.size_bytes());
     } else {
-        jobs.emplace_back(*buffer, size_bytes, optional_data);
+        jobs.emplace_back(*buffer, optional_data);
     }
 
     return *buffer;
@@ -153,8 +153,17 @@ void DescriptorSet::update_bindings(vk::Device device, u32 dst_binding, u32 dst_
     device.updateDescriptorSets(writes, {});
 }
 
-Texture2D::Texture2D(std::string_view label, u32 width, u32 height, vk::Format format, u32 mips, vk::ImageUsageFlags usage, u64 size_bytes, const void* optional_data) 
-    : storage(get_context().renderer->allocator->create_texture_storage(
+Buffer::Buffer(std::string_view label, vk::BufferUsageFlags usage, bool map_memory, u64 size, const void* optional_data)
+    : storage(get_context().renderer->allocator->create_buffer(label, usage, map_memory, std::span{static_cast<const std::byte*>(optional_data), size})) { }
+
+GpuBuffer* Buffer::operator->() { return &get_context().renderer->allocator->get_buffer(storage); }
+
+TextureStorage* Texture::operator->() { return &get_context().renderer->allocator->get_texture(storage); }
+
+const TextureStorage* Texture::operator->() const { return &get_context().renderer->allocator->get_texture(storage); }
+
+Texture2D::Texture2D(std::string_view label, u32 width, u32 height, vk::Format format, u32 mips, vk::ImageUsageFlags usage, std::span<const std::byte> optional_data) 
+    : Texture(get_context().renderer->allocator->create_texture_storage(
         label,
         vk::ImageCreateInfo{
             {},
@@ -167,13 +176,10 @@ Texture2D::Texture2D(std::string_view label, u32 width, u32 height, vk::Format f
             vk::ImageTiling::eOptimal,
             usage
         }, 
-        size_bytes, 
         optional_data)) { }
 
-TextureStorage* Texture2D::operator->() { return &get_context().renderer->allocator->get_texture(storage); }
-
 Texture3D::Texture3D(std::string_view label, u32 width, u32 height, u32 depth, vk::Format format, u32 mips, vk::ImageUsageFlags usage) 
-    : storage(get_context().renderer->allocator->create_texture_storage(
+    : Texture(get_context().renderer->allocator->create_texture_storage(
         label,
         vk::ImageCreateInfo{
             vk::ImageCreateFlagBits::eMutableFormat,
@@ -186,8 +192,6 @@ Texture3D::Texture3D(std::string_view label, u32 width, u32 height, u32 depth, v
             vk::ImageTiling::eOptimal,
             usage
         })) { }
-
-TextureStorage* Texture3D::operator->() { return &get_context().renderer->allocator->get_texture(storage); }
 
 bool Renderer::initialize() {
     if(!glfwInit()) {
@@ -304,9 +308,9 @@ void Renderer::setup_scene() {
             render_scene.meshes.push_back(GpuMesh{
                 .mesh = &f,
                 .vertex_offset = last_mesh.vertex_offset + last_mesh.vertex_count,
-                .vertex_count = f.vertices.size(),
+                .vertex_count = (u32)f.vertices.size(),
                 .index_offset = last_mesh.index_offset + last_mesh.index_count,
-                .index_count = f.indices.size(),
+                .index_count = (u32)f.indices.size(),
                 .instance_offset = last_mesh.instance_offset + last_mesh.index_count,
                 .instance_count = model_instance_counts.at(e)
             });
@@ -339,9 +343,21 @@ void Renderer::setup_scene() {
         ++parsed_gpu_model_instances[e.model];
     }
 
-    render_scene.vertex_buffer = allocator->create_buffer("scene_vertex_buffer", vk::BufferUsageFlagBits::eVertexBuffer, false, vertices.size() * sizeof(vertices[0]), vertices.data());
-    render_scene.index_buffer = allocator->create_buffer("scene_index_buffer", vk::BufferUsageFlagBits::eIndexBuffer, false, indices.size() * sizeof(indices[0]), indices.data());
-    render_scene.instance_buffer = allocator->create_buffer("scene_instance_buffer", vk::BufferUsageFlagBits::eStorageBuffer, true, instanced_meshes.size() * sizeof(instanced_meshes[0]), instanced_meshes.data());
+    std::vector<vk::DrawIndirectCommand> indirect_commands;
+    indirect_commands.reserve(render_scene.meshes.size());
+    for(const auto& e : render_scene.meshes) {
+        indirect_commands.push_back(vk::DrawIndirectCommand{
+            e.vertex_count,
+            e.instance_count,
+            e.vertex_offset,
+            e.instance_offset
+        });
+    }
+
+    render_scene.vertex_buffer = allocator->create_buffer("scene_vertex_buffer", vk::BufferUsageFlagBits::eVertexBuffer, false, std::as_bytes(std::span{vertices}));
+    render_scene.index_buffer = allocator->create_buffer("scene_index_buffer", vk::BufferUsageFlagBits::eIndexBuffer, false, std::as_bytes(std::span{indices}));
+    render_scene.instance_buffer = allocator->create_buffer("scene_instance_buffer", vk::BufferUsageFlagBits::eStorageBuffer, true, std::as_bytes(std::span{instanced_meshes}));
+    render_scene.indirect_commands_buffer = allocator->create_buffer("scene_indirect_buffer", vk::BufferUsageFlagBits::eIndirectBuffer, true, std::as_bytes(std::span{indirect_commands}));
 }
 
 void Renderer::render() {
@@ -358,8 +374,8 @@ void Renderer::render() {
     auto img = device.acquireNextImageKHR(swapchain, -1ull, fr.swapchain_semaphore).value;
     
     cmd.begin({vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
-    cmd.bindVertexBuffers(0, render_scene.vertex_buffer->buffer, 0ull);
-    cmd.bindIndexBuffer(render_scene.index_buffer->buffer, 0, vk::IndexType::eUint32);
+    cmd.bindVertexBuffers(0, allocator->get_buffer(render_scene.vertex_buffer).buffer, 0ull);
+    cmd.bindIndexBuffer(allocator->get_buffer(render_scene.index_buffer).buffer, 0, vk::IndexType::eUint32);
     render_graph->render(cmd, swapchain_images.at(img), swapchain_views.at(img));
 
     draw_ui(cmd, swapchain_views.at(img));
@@ -374,13 +390,7 @@ void Renderer::render() {
         fr.rendering_semaphore, swapchain, image_indices
     });
 
-    VkDrawIndirectCommand{
-        .firstInstance,
-        .firstVertex,
-        .instanceCount,
-        .vertexCount,
-    }
-    vkCmdDrawIndexedIndirectCount(VkCommandBuffer commandBuffer, VkBuffer buffer, VkDeviceSize offset, VkBuffer countBuffer, VkDeviceSize countBufferOffset, uint32_t maxDrawCount, uint32_t stride)
+    // vkCmdDrawIndexedIndirectCount(VkCommandBuffer commandBuffer, VkBuffer buffer, VkDeviceSize offset, VkBuffer countBuffer, VkDeviceSize countBufferOffset, uint32_t maxDrawCount, uint32_t stride)
     
     device.waitIdle();
 
@@ -744,18 +754,18 @@ bool Renderer::initialize_render_passes() {
         .build_graphics("imgui_pipeline");
 
     glm::mat4 global_buffer_size[2];
-    global_buffer = create_buffer("global_ubo", vk::BufferUsageFlagBits::eUniformBuffer, std::span{global_buffer_size, 2});
+    global_buffer = Buffer("global_ubo", vk::BufferUsageFlagBits::eUniformBuffer, true, sizeof(global_buffer_size), global_buffer_size);
 
     DescriptorInfo global_set_infos[] {
         DescriptorInfo{vk::DescriptorType::eUniformBuffer, global_buffer->buffer, 0, vk::WholeSize},
     };
     global_set.update_bindings(device, 0, 0, global_set_infos);
 
-    const auto res_voxel_albedo = render_graph->add_resource(RGResource{"voxel_albedo", voxel_albedo.storage});
-    const auto res_voxel_normal = render_graph->add_resource(RGResource{"voxel_normal", voxel_normal.storage});
-    const auto res_voxel_radiance = render_graph->add_resource(RGResource{"voxel_radiance", voxel_radiance.storage});
+    const auto res_voxel_albedo = render_graph->add_resource(RGResource{"voxel_albedo", &voxel_albedo});
+    const auto res_voxel_normal = render_graph->add_resource(RGResource{"voxel_normal", &voxel_normal});
+    const auto res_voxel_radiance = render_graph->add_resource(RGResource{"voxel_radiance", &voxel_radiance});
     const auto res_color_attachment = render_graph->add_resource(RGResource{"color_attachment", nullptr});
-    const auto res_depth_attachment = render_graph->add_resource(RGResource{"depth_attachment", depth_texture.storage});
+    const auto res_depth_attachment = render_graph->add_resource(RGResource{"depth_attachment", &depth_texture});
 
     const auto create_clear_pass = [&](RgResourceHandle resource) {
         RenderPass pass_clear;
@@ -771,7 +781,7 @@ bool Renderer::initialize_render_passes() {
             })
             .set_draw_func([rg = render_graph, resource](vk::CommandBuffer cmd) {
                 const auto& r = rg->get_resource(resource);
-                cmd.clearColorImage(r.texture->image, vk::ImageLayout::eTransferDstOptimal, vk::ClearColorValue{0.0f, 0.0f, 0.0f, 0.0f}, vk::ImageSubresourceRange{vk::ImageAspectFlagBits::eColor, 0, vk::RemainingMipLevels, 0, vk::RemainingArrayLayers});
+                cmd.clearColorImage((*r.texture)->image, vk::ImageLayout::eTransferDstOptimal, vk::ClearColorValue{0.0f, 0.0f, 0.0f, 0.0f}, vk::ImageSubresourceRange{vk::ImageAspectFlagBits::eColor, 0, vk::RemainingMipLevels, 0, vk::RemainingArrayLayers});
             });
         return pass_clear;
     };
@@ -804,7 +814,7 @@ bool Renderer::initialize_render_passes() {
         })
         .set_draw_func([this](vk::CommandBuffer cmd) {
             for(auto& gpum : render_scene.models) {
-                cmd.drawIndexed(gpum.index_count, 1, gpum.index_offset, gpum.vertex_offset, 0);
+                // cmd.drawIndexed(gpum.index_count, 1, gpum.index_offset, gpum.vertex_offset, 0);
             }
         });
     render_graph->add_render_pass(pass_voxelization);
@@ -845,7 +855,7 @@ bool Renderer::initialize_render_passes() {
         });
     render_graph->add_render_pass(pass_radiance_inject);
 
-    for(u32 i=1; i<voxel_radiance.storage->mips; ++i) {
+    for(u32 i=1; i<voxel_radiance->mips; ++i) {
         RenderPass mip_pass;
         mip_pass
             .set_name(std::format("radiance_mip_{}", i))
@@ -867,8 +877,8 @@ bool Renderer::initialize_render_passes() {
             })
             .set_draw_func([&, i](vk::CommandBuffer cmd) {
                 i32 mip_size = 256u >> i;
-                cmd.blitImage(voxel_radiance.storage->image, vk::ImageLayout::eGeneral,
-                    voxel_radiance.storage->image, vk::ImageLayout::eGeneral,
+                cmd.blitImage(voxel_radiance->image, vk::ImageLayout::eGeneral,
+                    voxel_radiance->image, vk::ImageLayout::eGeneral,
                     vk::ImageBlit{
                         vk::ImageSubresourceLayers{vk::ImageAspectFlagBits::eColor, i-1, 0, 1},
                         { vk::Offset3D{}, vk::Offset3D{mip_size<<1, mip_size<<1, mip_size<<1} },
@@ -893,7 +903,7 @@ bool Renderer::initialize_render_passes() {
             RGSyncStage::Fragment,
             TextureInfo{
                 .required_layout = RGImageLayout::General,
-                .range = {0, voxel_radiance.storage->mips, 0, 1}
+                .range = {0, voxel_radiance->mips, 0, 1}
             }
         })
         .write_color_attachment(RPResource{
@@ -914,7 +924,7 @@ bool Renderer::initialize_render_passes() {
             // cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, pp_default_lit.layout.layout, 1, default_lit_set.set, {});
             cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, pp_default_lit.layout.layout, 2, material_set.set, {});
             for(u32 idx = 0; auto& gpum : render_scene.models) {
-                cmd.drawIndexed(gpum.index_count, 1, gpum.index_offset, gpum.vertex_offset, idx);
+                // cmd.drawIndexed(gpum.index_count, 1, gpum.index_offset, gpum.vertex_offset, idx);
                 ++idx;
             }
         });
@@ -938,6 +948,7 @@ bool Renderer::initialize_render_passes() {
 }
 
 void Renderer::load_waiting_textures(vk::CommandBuffer cmd) {
+#if 0
     const auto total_size = std::accumulate(texture_jobs.cbegin(), texture_jobs.cend(), 0ull, [](u64 sum, const TextureUploadJob& job) { return sum + job.image->size(); });
     
     if(total_size == 0ull) { return; }
@@ -1015,6 +1026,7 @@ void Renderer::load_waiting_textures(vk::CommandBuffer cmd) {
 
     spdlog::info("Finished loading {} textures of total size: {}KB", texture_jobs.size(), total_size / 1024u);
     texture_jobs.clear();
+#endif
 }
 
 void Renderer::draw_ui(vk::CommandBuffer cmd, vk::ImageView swapchain_view) {
@@ -1042,30 +1054,30 @@ void Renderer::draw_ui(vk::CommandBuffer cmd, vk::ImageView swapchain_view) {
     ImGui::SetNextWindowPos(ImVec2(window_width - scene_width, 0));
     ImGui::SetNextWindowSize(ImVec2(scene_width, window_height));
     ImGui::Begin("Scene", 0, scene_flags);
-    for(u32 i=0; i<render_scene.models.size(); ++i) {
-        auto &model = render_scene.models.at(i);
-        if(ImGui::TreeNode(std::format("{}##_{}", model.mesh->name, i).c_str())) {
-            if(ImGui::CollapsingHeader("material")) {
-                bool modified = false;
-                ImGui::PushItemWidth(150.0f);
-                // modified |= ImGui::SliderFloat("ambient_strength", &model.mesh->material.ambient_color.w, 0.0f, 2.0f);
-                // modified |= ImGui::ColorEdit3("ambient_color", &model.mesh->material.ambient_color.x);
-                // ImGui::Dummy({1.0f, 5.0f});
-                // modified |= ImGui::SliderFloat("diffuse_strength", &model.mesh->material.diffuse_color.w, 0.0f, 2.0f);
-                // modified |= ImGui::ColorEdit3("diffuse_color", &model.mesh->material.diffuse_color.x);
-                // ImGui::Dummy({1.0f, 5.0f});
-                // modified |= ImGui::SliderFloat("specular_strength", &model.mesh->material.specular_color.w, 0.0f, 2.0f);
-                // modified |= ImGui::ColorEdit3("specular_color", &model.mesh->material.specular_color.x);
-                // ImGui::PopItemWidth();
+    // for(u32 i=0; i<render_scene.models.size(); ++i) {
+    //     auto &model = render_scene.models.at(i);
+    //     if(ImGui::TreeNode(std::format("{}##_{}", model.mesh->name, i).c_str())) {
+    //         if(ImGui::CollapsingHeader("material")) {
+    //             bool modified = false;
+    //             ImGui::PushItemWidth(150.0f);
+    //             // modified |= ImGui::SliderFloat("ambient_strength", &model.mesh->material.ambient_color.w, 0.0f, 2.0f);
+    //             // modified |= ImGui::ColorEdit3("ambient_color", &model.mesh->material.ambient_color.x);
+    //             // ImGui::Dummy({1.0f, 5.0f});
+    //             // modified |= ImGui::SliderFloat("diffuse_strength", &model.mesh->material.diffuse_color.w, 0.0f, 2.0f);
+    //             // modified |= ImGui::ColorEdit3("diffuse_color", &model.mesh->material.diffuse_color.x);
+    //             // ImGui::Dummy({1.0f, 5.0f});
+    //             // modified |= ImGui::SliderFloat("specular_strength", &model.mesh->material.specular_color.w, 0.0f, 2.0f);
+    //             // modified |= ImGui::ColorEdit3("specular_color", &model.mesh->material.specular_color.x);
+    //             // ImGui::PopItemWidth();
 
-                if(modified) {
-                    // Material* materials = (Material*)scene.material_buffer->data;
-                    // memcpy(&materials[i], &model.mesh->material, sizeof(Material));
-                }
-            }
-            ImGui::TreePop();
-        }
-    }
+    //             if(modified) {
+    //                 // Material* materials = (Material*)scene.material_buffer->data;
+    //                 // memcpy(&materials[i], &model.mesh->material, sizeof(Material));
+    //             }
+    //         }
+    //         ImGui::TreePop();
+    //     }
+    // }
     scene_width = ImGui::GetWindowWidth();
     ImGui::End();
 

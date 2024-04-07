@@ -33,3 +33,9 @@ template<typename T> struct Handle {
     constexpr auto operator<=>(const Handle<T>& other) const noexcept = default;
     u64 handle{0ull}; 
 };
+
+namespace std {
+    template<typename T> struct hash<Handle<T>> {
+        size_t operator()(const Handle<T>& h) const { return h.handle; }
+    };
+}

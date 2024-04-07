@@ -8,7 +8,7 @@
 
 struct DescriptorSet;
 struct Pipeline;
-struct TextureStorage;
+struct Texture;
 
 enum class RGResourceType {
     None, Buffer, Texture
@@ -254,8 +254,7 @@ private:
 };
 
 struct RGResource {
-    // RGResource(const std::string& name, Buffer* buffer): name(name), type(RGResourceType::Buffer) {}
-    RGResource(const std::string& name, TextureStorage* texture): name(name), type(RGResourceType::Texture), texture(texture), texture_accesses() {}
+    RGResource(const std::string& name, Texture* texture): name(name), type(RGResourceType::Texture), texture(texture), texture_accesses() {}
 
     RGResource(const RGResource& o) noexcept { *this = o; }
     RGResource& operator=(const RGResource& o) noexcept {
@@ -291,7 +290,7 @@ struct RGResource {
     RGResourceType type{RGResourceType::None};
     union {
         // Buffer* buffer;
-        TextureStorage* texture;
+        Texture* texture;
     };
 
     union {

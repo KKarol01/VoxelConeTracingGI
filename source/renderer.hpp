@@ -21,9 +21,9 @@ class RenderGraph;
 
 struct GpuMesh {
     const Mesh* mesh;
-    u64 vertex_offset, vertex_count;
-    u64 index_offset, index_count;
-    u64 instance_offset, instance_count;
+    u32 vertex_offset, vertex_count;
+    u32 index_offset, index_count;
+    u32 instance_offset, instance_count;
 };
 
 struct GpuInstancedMesh {
@@ -43,6 +43,7 @@ struct GpuScene {
     Handle<GpuBuffer> vertex_buffer;
     Handle<GpuBuffer> index_buffer;
     Handle<GpuBuffer> instance_buffer;
+    Handle<GpuBuffer> indirect_commands_buffer;
 };
 
 template<typename VkObject> struct VulkanObjectType;
@@ -93,9 +94,9 @@ inline vk::ImageAspectFlags deduce_vk_image_aspect(vk::Format format) {
 
 class RendererAllocator {
     struct UploadJob {
-        UploadJob(std::variant<Handle<TextureStorage>, Handle<GpuBuffer>> storage, u64 size_bytes, const void* data): storage(storage) {
-            this->data.resize(size_bytes);
-            std::memcpy(this->data.data(), data, size_bytes);
+        UploadJob(std::variant<Handle<TextureStorage>, Handle<GpuBuffer>> storage, std::span<const std::byte> data): storage(storage) {
+            this->data.resize(data.size_bytes());
+            std::memcpy(this->data.data(), data.data(), data.size_bytes());
         }
         std::variant<Handle<TextureStorage>, Handle<GpuBuffer>> storage;
         std::vector<std::byte> data;
@@ -104,8 +105,8 @@ class RendererAllocator {
 public:
     explicit RendererAllocator(vk::Device device, VmaAllocator vma): device(device), vma(vma) {}
 
-    Handle<TextureStorage> create_texture_storage(std::string_view label, const vk::ImageCreateInfo& info, u64 size_bytes = 0ull, const void* optional_data = nullptr);
-    Handle<GpuBuffer> create_buffer(std::string_view label, vk::BufferUsageFlags usage, bool map_memory, u64 size_bytes, const void* optional_data = nullptr);
+    Handle<TextureStorage> create_texture_storage(std::string_view label, const vk::ImageCreateInfo& info, std::span<const std::byte> optional_data = {});
+    Handle<GpuBuffer> create_buffer(std::string_view label, vk::BufferUsageFlags usage, bool map_memory, std::span<const std::byte> optional_data = {});
 
     TextureStorage& get_texture(Handle<TextureStorage> handle) { return find_with_handle(handle, textures); }
     GpuBuffer& get_buffer(Handle<GpuBuffer> handle) { return find_with_handle(handle, buffers); }
@@ -180,7 +181,7 @@ public:
     Texture3D voxel_albedo, voxel_normal, voxel_radiance;
     Texture2D depth_texture;
     vk::ImageView depth_texture_view;
-    GpuBuffer* global_buffer;
+    Buffer global_buffer;
 
     Pipeline pp_default_lit;
     Pipeline pp_voxelize;

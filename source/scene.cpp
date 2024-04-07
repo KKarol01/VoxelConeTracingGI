@@ -7,24 +7,23 @@
 #include <fastgltf/glm_element_traits.hpp>
 #include <stb/stb_image.h>
 
-static Texture2D* get_asset_texture(const fastgltf::Asset* asset, u64 texture_index, std::unordered_map<std::filesystem::path, Texture2D>* cache, std::vector<const Texture2D*>* tex_ids) {
+static Texture2D get_asset_texture(const fastgltf::Asset* asset, u64 texture_index, std::unordered_map<std::filesystem::path, Texture2D>* cache) {
     const auto& texture = asset->textures.at(texture_index);
     const auto& image = asset->images.at(texture.imageIndex.value()); // watch out for this, should further extensions be enabled.
 
     if(auto tex = cache->find(image.name); tex != cache->end()) {
-        return &tex->second;
+        return tex->second;
     } 
 
-    return std::visit(fastgltf::visitor{
-        [](auto&args) -> Texture2D* { return nullptr; },
-        [&cache = *cache, &tex_ids, &name = image.name](const fastgltf::sources::Array& vec) {
+    return *std::visit(fastgltf::visitor{
+        [](auto&) -> Texture2D* { return nullptr; },
+        [&cache = *cache, &name = image.name](const fastgltf::sources::Array& vec) -> Texture2D* {
             int x, y, ch;
             auto raw_image = reinterpret_cast<std::byte*>(stbi_load_from_memory(vec.bytes.data(), vec.bytes.size(), &x, &y, &ch, 4));
             auto new_tex = &cache.insert({
                 name,
-                Texture2D{std::format("scene_texture_2d_{}", name), (u32)x, (u32)y, vk::Format::eR8G8B8A8Unorm, (u32)std::log2f(std::min(x, y)) + 1, vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eTransferSrc, x*y*4u, raw_image}
+                Texture2D{std::format("scene_texture_2d_{}", name), (u32)x, (u32)y, vk::Format::eR8G8B8A8Unorm, (u32)std::log2f(std::min(x, y)) + 1, vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eTransferSrc, std::span{raw_image, x*y*4u}}
             }).first->second;
-            tex_ids->push_back(new_tex);
             return new_tex;
         }
     }, image.data);
@@ -110,10 +109,10 @@ Handle<Model> Scene::load_model(const std::filesystem::path& path) {
 
             const auto& material = asset->materials[primitive.materialIndex.value()];
             if(material.pbrData.baseColorTexture.has_value()) {
-                mesh.material.diffuse_texture = get_asset_texture(&asset.get(), material.pbrData.baseColorTexture->textureIndex, &material_textures, &textures_ids);
+                mesh.material.diffuse_texture = get_asset_texture(&asset.get(), material.pbrData.baseColorTexture->textureIndex, &material_textures);
             }
             if(material.normalTexture.has_value()) {
-                mesh.material.normal_texture = get_asset_texture(&asset.get(), material.normalTexture->textureIndex, &material_textures, &textures_ids);
+                mesh.material.normal_texture = get_asset_texture(&asset.get(), material.normalTexture->textureIndex, &material_textures);
             }
         }
     }

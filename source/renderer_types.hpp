@@ -103,6 +103,16 @@ struct GpuBuffer : Handle<GpuBuffer> {
     VmaAllocation alloc;
 };
 
+struct Buffer {
+    constexpr Buffer() = default;
+    Buffer(std::string_view label, vk::BufferUsageFlags usage, bool map_memory, u64 size, const void* optional_data = nullptr);
+
+    constexpr operator bool() const noexcept { return static_cast<bool>(storage); }
+    GpuBuffer* operator->();
+
+    Handle<GpuBuffer> storage;
+};
+
 struct FrameResources {
     vk::CommandPool pool;
     vk::CommandBuffer cmd;
@@ -138,24 +148,25 @@ struct TextureStorage : Handle<TextureStorage> {
     vk::ImageView default_view;
 };
 
-struct Texture2D {
-    constexpr Texture2D() = default;
-    Texture2D(std::string_view label, u32 width, u32 height, vk::Format format, u32 mips, vk::ImageUsageFlags usage, u64 size_bytes = 0ull, const void* optional_data = nullptr);
+struct Texture {
+    constexpr Texture() = default;
+    Texture(Handle<TextureStorage> storage): storage(storage) {}
 
     constexpr operator bool() const noexcept { return static_cast<bool>(storage); }
     TextureStorage* operator->();
-    
+    const TextureStorage* operator->() const;
+
     Handle<TextureStorage> storage;
 };
 
-struct Texture3D {
+struct Texture2D : public Texture {
+    constexpr Texture2D() = default;
+    Texture2D(std::string_view label, u32 width, u32 height, vk::Format format, u32 mips, vk::ImageUsageFlags usage, std::span<const std::byte> optional_data = {});
+};
+
+struct Texture3D : public Texture {
     constexpr Texture3D() = default;
     Texture3D(std::string_view label, u32 width, u32 height, u32 depth, vk::Format format, u32 mips, vk::ImageUsageFlags usage); 
-
-    constexpr operator bool() const noexcept { return static_cast<bool>(storage); }
-    TextureStorage* operator->();
-
-    Handle<TextureStorage> storage;
 };
 
 struct GLFWwindow;

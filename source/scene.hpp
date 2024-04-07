@@ -48,5 +48,5 @@ private:
 
     std::vector<Model> models;
     std::vector<SceneModel> scene_models;
-    std::unordered_map<std::filesystem::path, Handle<TextureStorage>> material_textures;
+    std::unordered_map<std::filesystem::path, Texture2D> material_textures;
 };

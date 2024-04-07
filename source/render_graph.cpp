@@ -142,9 +142,9 @@ void RenderGraph::create_rendering_resources() {
 
             auto view = renderer->device.createImageView(vk::ImageViewCreateInfo{
                 {},
-                rg_resource.texture->image,
-                vk_img_type_to_vk_img_view_type(rg_resource.texture->type),
-                rp_resource.texture_info.mutable_format == RGImageFormat::DeduceFromVkImage ? rg_resource.texture->format : to_vk_format(rp_resource.texture_info.mutable_format),
+                (*rg_resource.texture)->image,
+                vk_img_type_to_vk_img_view_type((*rg_resource.texture)->type),
+                rp_resource.texture_info.mutable_format == RGImageFormat::DeduceFromVkImage ? (*rg_resource.texture)->format : to_vk_format(rp_resource.texture_info.mutable_format),
                 {},
                 to_vk_subresource_range(rp_resource.texture_info.range, rp_resource.usage == RGResourceUsage::DepthAttachment ? RGImageAspect::Depth : RGImageAspect::Color)
             });
@@ -291,7 +291,7 @@ void RenderGraph::bake_graph() {
             new_layout,
             vk::QueueFamilyIgnored,
             vk::QueueFamilyIgnored,
-            graph_resource.texture ? graph_resource.texture->image : vk::Image{},
+            graph_resource.texture ? (*graph_resource.texture)->image : vk::Image{},
             to_vk_subresource_range(range, dst_resource.usage == RGResourceUsage::DepthAttachment ? RGImageAspect::Depth : RGImageAspect::Color)
         };
 
@@ -325,7 +325,7 @@ void RenderGraph::bake_graph() {
                     }
                     for(const auto& r : query.previously_unaccessed.ranges) {
                         vk::ImageLayout old_layout{vk::ImageLayout::eUndefined};
-                        if(graph_resource.texture) { old_layout = graph_resource.texture->current_layout; }
+                        if(graph_resource.texture) { old_layout = (*graph_resource.texture)->current_layout; }
                         insert_barrier(0, nullptr, &pass, pass_resource, pass_resource, old_layout, to_vk_layout(pass_resource.texture_info.required_layout), false, is_read, r);
                     }
                 } break;
