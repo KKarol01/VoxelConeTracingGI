@@ -38,12 +38,15 @@ struct GpuModel {
 };
 
 struct GpuScene {
+    void render(vk::CommandBuffer cmd);
+    
     std::vector<GpuModel> models;
     std::vector<GpuMesh> meshes;
-    Handle<GpuBuffer> vertex_buffer;
-    Handle<GpuBuffer> index_buffer;
-    Handle<GpuBuffer> instance_buffer;
-    Handle<GpuBuffer> indirect_commands_buffer;
+    Buffer vertex_buffer;
+    Buffer index_buffer;
+    Buffer instance_buffer;
+    Buffer indirect_commands_buffer;
+    u32 draw_count; 
 };
 
 template<typename VkObject> struct VulkanObjectType;
@@ -106,10 +109,14 @@ public:
     explicit RendererAllocator(vk::Device device, VmaAllocator vma): device(device), vma(vma) {}
 
     Handle<TextureStorage> create_texture_storage(std::string_view label, const vk::ImageCreateInfo& info, std::span<const std::byte> optional_data = {});
+    Handle<GpuBuffer> create_buffer(std::string_view label, vk::BufferUsageFlags usage, bool map_memory, u64 size_bytes);
     Handle<GpuBuffer> create_buffer(std::string_view label, vk::BufferUsageFlags usage, bool map_memory, std::span<const std::byte> optional_data = {});
 
     TextureStorage& get_texture(Handle<TextureStorage> handle) { return find_with_handle(handle, textures); }
     GpuBuffer& get_buffer(Handle<GpuBuffer> handle) { return find_with_handle(handle, buffers); }
+
+    bool has_jobs() const { return !jobs.empty(); }
+    void complete_jobs(vk::CommandBuffer cmd);
 
 private:
     template<typename T> T& find_with_handle(Handle<T> handle, std::vector<T>& storage) {

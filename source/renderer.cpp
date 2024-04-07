@@ -16,6 +16,10 @@ VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE
 #include <slang/slang.h>
 #include <slang/slang-com-ptr.h>
 
+void GpuScene::render(vk::CommandBuffer cmd) {
+    cmd.drawIndexedIndirect(indirect_commands_buffer->buffer, 0, draw_count, sizeof(vk::DrawIndexedIndirectCommand));
+}
+
 Handle<TextureStorage> RendererAllocator::create_texture_storage(std::string_view label, const vk::ImageCreateInfo& info, std::span<const std::byte> optional_data) {
     auto* texture = create_texture_ptr(label, info);
     if(!texture) { return {}; }
@@ -24,6 +28,17 @@ Handle<TextureStorage> RendererAllocator::create_texture_storage(std::string_vie
 
     jobs.emplace_back(*texture, optional_data);
     return *texture;
+}
+
+Handle<GpuBuffer> RendererAllocator::create_buffer(std::string_view label, vk::BufferUsageFlags usage, bool map_memory, u64 size_bytes) {
+    if(size_bytes == 0ull) { 
+        spdlog::warn("Requested buffer ({}) size is 0. This is probably a bug.", label);
+        return {};
+    }
+
+    auto* buffer = create_buffer_ptr(label, usage, map_memory, size_bytes);
+    if(!buffer) { return {}; }
+    return *buffer;
 }
 
 Handle<GpuBuffer> RendererAllocator::create_buffer(std::string_view label, vk::BufferUsageFlags usage, bool map_memory, std::span<const std::byte> optional_data) {
@@ -44,6 +59,46 @@ Handle<GpuBuffer> RendererAllocator::create_buffer(std::string_view label, vk::B
     }
 
     return *buffer;
+}
+
+void RendererAllocator::complete_jobs(vk::CommandBuffer cmd) {
+    const auto total_upload_size = [&jobs = this->jobs] {
+        u64 sum = 0;
+        for(const auto& e : jobs) {
+            sum += e.data.size();
+        }
+        return sum;
+    }();
+
+    std::vector<std::byte> upload_data;
+    upload_data.reserve(total_upload_size);
+
+    for(auto& e : jobs) {
+        upload_data.insert(upload_data.end(), e.data.begin(), e.data.end());
+    }
+
+    auto staging_buffer = Buffer{"allocator_staging_buffer", vk::BufferUsageFlagBits::eTransferSrc, true, std::span{upload_data}};
+
+    u64 offset = 0ull;
+    for(auto& e : jobs) {
+        if(e.storage.index() == 1) {
+            const auto copy_region = vk::BufferCopy2{offset, 0, e.data.size()};
+            cmd.copyBuffer2(vk::CopyBufferInfo2{
+                staging_buffer->buffer,
+                get_buffer(std::get<1>(e.storage)).buffer,
+                copy_region
+            });
+        }
+        offset += e.data.size();
+    }
+
+    get_context().renderer->deletion_queue.push_back([this, vma = this->vma, buffer = staging_buffer.storage.handle] {
+        auto it = std::lower_bound(buffers.begin(), buffers.end(), buffer);
+        if(it == buffers.end()) { return; }
+        vmaDestroyBuffer(vma, it->buffer, it->alloc);
+        buffers.erase(it);
+    });
+    jobs.clear();
 }
 
 GpuBuffer* RendererAllocator::create_buffer_ptr(std::string_view label, vk::BufferUsageFlags usage, bool map_memory, u64 size_bytes) {
@@ -153,8 +208,11 @@ void DescriptorSet::update_bindings(vk::Device device, u32 dst_binding, u32 dst_
     device.updateDescriptorSets(writes, {});
 }
 
-Buffer::Buffer(std::string_view label, vk::BufferUsageFlags usage, bool map_memory, u64 size, const void* optional_data)
-    : storage(get_context().renderer->allocator->create_buffer(label, usage, map_memory, std::span{static_cast<const std::byte*>(optional_data), size})) { }
+Buffer::Buffer(std::string_view label, vk::BufferUsageFlags usage, bool map_memory, u64 size)
+    : storage(get_context().renderer->allocator->create_buffer(label, usage, map_memory, size)) { }
+
+Buffer::Buffer(std::string_view label, vk::BufferUsageFlags usage, bool map_memory, std::span<const std::byte> optional_data)
+    : storage(get_context().renderer->allocator->create_buffer(label, usage, map_memory, optional_data)) { }
 
 GpuBuffer* Buffer::operator->() { return &get_context().renderer->allocator->get_buffer(storage); }
 
@@ -338,24 +396,26 @@ void Renderer::setup_scene() {
         ++parsed_gpu_model_instances[e.model];
     }
 
-    std::vector<vk::DrawIndirectCommand> indirect_commands;
+    std::vector<vk::DrawIndexedIndirectCommand> indirect_commands;
     indirect_commands.reserve(render_scene.meshes.size());
     for(const auto& e : render_scene.meshes) {
-        indirect_commands.push_back(vk::DrawIndirectCommand{
-            e.vertex_count,
+        indirect_commands.push_back(vk::DrawIndexedIndirectCommand{
+            e.index_count,
             e.instance_count,
-            e.vertex_offset,
+            e.index_offset,
+            (i32)e.vertex_offset,
             e.instance_offset
         });
     }
 
-    render_scene.vertex_buffer = allocator->create_buffer("scene_vertex_buffer", vk::BufferUsageFlagBits::eVertexBuffer, false, std::as_bytes(std::span{vertices}));
-    render_scene.index_buffer = allocator->create_buffer("scene_index_buffer", vk::BufferUsageFlagBits::eIndexBuffer, false, std::as_bytes(std::span{indices}));
-    render_scene.instance_buffer = allocator->create_buffer("scene_instance_buffer", vk::BufferUsageFlagBits::eStorageBuffer, true, std::as_bytes(std::span{instanced_meshes}));
-    render_scene.indirect_commands_buffer = allocator->create_buffer("scene_indirect_buffer", vk::BufferUsageFlagBits::eIndirectBuffer, true, std::as_bytes(std::span{indirect_commands}));
+    render_scene.vertex_buffer = Buffer{"scene_vertex_buffer", vk::BufferUsageFlagBits::eVertexBuffer, false, std::as_bytes(std::span{vertices})};
+    render_scene.index_buffer = Buffer{"scene_index_buffer", vk::BufferUsageFlagBits::eIndexBuffer, false, std::as_bytes(std::span{indices})};
+    render_scene.instance_buffer = Buffer{"scene_instance_buffer", vk::BufferUsageFlagBits::eStorageBuffer, true, std::as_bytes(std::span{instanced_meshes})};
+    render_scene.indirect_commands_buffer = Buffer{"scene_indirect_buffer", vk::BufferUsageFlagBits::eIndirectBuffer, true, std::as_bytes(std::span{indirect_commands})};
+    render_scene.draw_count = indirect_commands.size();
 }
 
-void Renderer::render() {
+void Renderer::render() { 
     static const auto P = glm::perspectiveFov(glm::radians(75.0f), 1024.0f, 768.0f, 0.01f, 25.0f);
     auto V = get_context().camera->view;
     glm::mat4 global_buffer_data[] {
@@ -369,11 +429,21 @@ void Renderer::render() {
     auto img = device.acquireNextImageKHR(swapchain, -1ull, fr.swapchain_semaphore).value;
     
     cmd.begin({vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
-    cmd.bindVertexBuffers(0, allocator->get_buffer(render_scene.vertex_buffer).buffer, 0ull);
-    cmd.bindIndexBuffer(allocator->get_buffer(render_scene.index_buffer).buffer, 0, vk::IndexType::eUint32);
+
+    if(allocator->has_jobs()) {
+        allocator->complete_jobs(cmd);
+        cmd.end();
+        graphics_queue.submit(vk::SubmitInfo{{}, {}, cmd});
+        graphics_queue.waitIdle();
+        cmd.begin({vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
+    }
+
+    cmd.bindVertexBuffers(0, render_scene.vertex_buffer->buffer, 0ull);
+    cmd.bindIndexBuffer(render_scene.index_buffer->buffer, 0, vk::IndexType::eUint32);
+
     render_graph->render(cmd, swapchain_images.at(img), swapchain_views.at(img));
 
-    draw_ui(cmd, swapchain_views.at(img));
+    // draw_ui(cmd, swapchain_views.at(img));
 
     cmd.end();
     vk::PipelineStageFlags wait_masks[] {
@@ -451,6 +521,7 @@ bool Renderer::initialize_vulkan() {
     desc_idx_features.runtimeDescriptorArray = true;
     features.features.fragmentStoresAndAtomics = true;
     features.features.geometryShader = true;
+    features.features.multiDrawIndirect = true;
 
     vkb::DeviceBuilder device_builder{pdev_sel_result.value()};
     auto device_builder_result = device_builder
@@ -749,7 +820,7 @@ bool Renderer::initialize_render_passes() {
         .build_graphics("imgui_pipeline");
 
     glm::mat4 global_buffer_size[2];
-    global_buffer = Buffer("global_ubo", vk::BufferUsageFlagBits::eUniformBuffer, true, sizeof(global_buffer_size), global_buffer_size);
+    global_buffer = Buffer{"global_ubo", vk::BufferUsageFlagBits::eUniformBuffer, true, std::as_bytes(std::span{global_buffer_size})};
 
     DescriptorInfo global_set_infos[] {
         DescriptorInfo{vk::DescriptorType::eUniformBuffer, global_buffer->buffer, 0, vk::WholeSize},
@@ -781,9 +852,9 @@ bool Renderer::initialize_render_passes() {
         return pass_clear;
     };
 
-    render_graph->add_render_pass(create_clear_pass(res_voxel_albedo));
-    render_graph->add_render_pass(create_clear_pass(res_voxel_normal));
-    render_graph->add_render_pass(create_clear_pass(res_voxel_radiance));
+    // render_graph->add_render_pass(create_clear_pass(res_voxel_albedo));
+    // render_graph->add_render_pass(create_clear_pass(res_voxel_normal));
+    // render_graph->add_render_pass(create_clear_pass(res_voxel_radiance));
 
     RenderPass pass_voxelization;
     pass_voxelization
@@ -812,7 +883,7 @@ bool Renderer::initialize_render_passes() {
                 // cmd.drawIndexed(gpum.index_count, 1, gpum.index_offset, gpum.vertex_offset, 0);
             }
         });
-    render_graph->add_render_pass(pass_voxelization);
+    // render_graph->add_render_pass(pass_voxelization);
 
     RenderPass pass_radiance_inject;
     pass_radiance_inject
@@ -848,7 +919,7 @@ bool Renderer::initialize_render_passes() {
         .set_draw_func([this](vk::CommandBuffer cmd) {
             cmd.dispatch(256/8, 256/8, 256/8);
         });
-    render_graph->add_render_pass(pass_radiance_inject);
+    // render_graph->add_render_pass(pass_radiance_inject);
 
     for(u32 i=1; i<voxel_radiance->mips; ++i) {
         RenderPass mip_pass;
@@ -882,7 +953,7 @@ bool Renderer::initialize_render_passes() {
                     },
                     vk::Filter::eLinear);
             });
-        render_graph->add_render_pass(mip_pass);
+        // render_graph->add_render_pass(mip_pass);
     }
         
     RenderPass pass_default_lit;
@@ -893,14 +964,14 @@ bool Renderer::initialize_render_passes() {
             .viewport = {0.0f, 768.0f, 1024.0f, -768.0f, 0.0f, 1.0f},
             .scissor = {0, 0, 1024, 768}
         })
-        .read_from_image(RPResource{
-            res_voxel_radiance, 
-            RGSyncStage::Fragment,
-            TextureInfo{
-                .required_layout = RGImageLayout::General,
-                .range = {0, voxel_radiance->mips, 0, 1}
-            }
-        })
+        // .read_from_image(RPResource{
+        //     res_voxel_radiance, 
+        //     RGSyncStage::Fragment,
+        //     TextureInfo{
+        //         .required_layout = RGImageLayout::General,
+        //         .range = {0, voxel_radiance->mips, 0, 1}
+        //     }
+        // })
         .write_color_attachment(RPResource{
             res_color_attachment,
             RGSyncStage::ColorAttachmentOutput,
@@ -916,12 +987,8 @@ bool Renderer::initialize_render_passes() {
             }
         })
         .set_draw_func([&](vk::CommandBuffer cmd) {
-            // cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, pp_default_lit.layout.layout, 1, default_lit_set.set, {});
-            cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, pp_default_lit.layout.layout, 2, material_set.set, {});
-            for(u32 idx = 0; auto& gpum : render_scene.models) {
-                // cmd.drawIndexed(gpum.index_count, 1, gpum.index_offset, gpum.vertex_offset, idx);
-                ++idx;
-            }
+            // cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, pp_default_lit.layout.layout, 2, material_set.set, {});
+            render_scene.render(cmd);
         });
     render_graph->add_render_pass(pass_default_lit);
 

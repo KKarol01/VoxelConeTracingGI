@@ -423,23 +423,25 @@ void RenderGraph::render(vk::CommandBuffer cmd, vk::Image swapchain_image, vk::I
 
         for(u32 i=0; i<dependency_info.imageMemoryBarrierCount; ++i) {
             auto& barrier = dependency_info.pImageMemoryBarriers[i];
-            // spdlog::debug("({}) {}:{} -> {}:{} {} -> {} RNG: {} - {} {} - {}",
-            //     (u64)(VkImage)barrier.image,
-            //     vk::to_string(barrier.srcStageMask),
-            //     vk::to_string(barrier.srcAccessMask),
-            //     vk::to_string(barrier.dstStageMask),
-            //     vk::to_string(barrier.dstAccessMask),
-            //     vk::to_string(barrier.oldLayout),
-            //     vk::to_string(barrier.newLayout),
-            //     barrier.subresourceRange.baseMipLevel,
-            //     barrier.subresourceRange.levelCount,
-            //     barrier.subresourceRange.baseArrayLayer,
-            //     barrier.subresourceRange.layerCount);
+#if 1
+            spdlog::debug("({}) {}:{} -> {}:{} {} -> {} RNG: {} - {} {} - {}",
+                (u64)(VkImage)barrier.image,
+                vk::to_string(barrier.srcStageMask),
+                vk::to_string(barrier.srcAccessMask),
+                vk::to_string(barrier.dstStageMask),
+                vk::to_string(barrier.dstAccessMask),
+                vk::to_string(barrier.oldLayout),
+                vk::to_string(barrier.newLayout),
+                barrier.subresourceRange.baseMipLevel,
+                barrier.subresourceRange.levelCount,
+                barrier.subresourceRange.baseArrayLayer,
+                barrier.subresourceRange.layerCount);
+#endif
         }
 
         for(u32 i = offset; i < offset + pass_count; ++i) {
             const auto& pass = passes.at(i);
-            // spdlog::debug("{}", pass.name);
+            spdlog::debug("{}", pass.name);
 
             if(pass.pipeline) {
                 auto* renderer = get_context().renderer;

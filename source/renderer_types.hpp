@@ -105,7 +105,8 @@ struct GpuBuffer : Handle<GpuBuffer> {
 
 struct Buffer {
     constexpr Buffer() = default;
-    Buffer(std::string_view label, vk::BufferUsageFlags usage, bool map_memory, u64 size, const void* optional_data = nullptr);
+    Buffer(std::string_view label, vk::BufferUsageFlags usage, bool map_memory, u64 size);
+    Buffer(std::string_view label, vk::BufferUsageFlags usage, bool map_memory, std::span<const std::byte> optional_data = {});
 
     constexpr operator bool() const noexcept { return static_cast<bool>(storage); }
     GpuBuffer* operator->();

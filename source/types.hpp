@@ -20,14 +20,14 @@ inline constexpr HandleGenerate_T HandleGenerate;
 template<typename T> struct Handle;
 
 template<typename T> struct HandleGenerator {
-    inline static Handle<T> generate() { return Handle<T>{++counter}; }
+    inline static u64 generate() { return ++counter; }
     inline static std::atomic_uint64_t counter{0ull};
 };
 
 template<typename T> struct Handle { 
     constexpr Handle() = default;
     constexpr explicit Handle(u64 handle): handle(handle) {}
-    constexpr explicit Handle(HandleGenerate_T): handle(HandleGenerator<T>::generate()) {}
+    constexpr explicit Handle(HandleGenerate_T): Handle(HandleGenerator<T>::generate()) {}
     constexpr operator bool() const noexcept { return handle != 0ull; }
     constexpr auto operator<=>(const Handle<T>& other) const noexcept = default;
     u64 handle{0ull}; 
