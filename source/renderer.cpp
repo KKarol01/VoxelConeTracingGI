@@ -311,7 +311,7 @@ void Renderer::setup_scene() {
                 .vertex_count = (u32)f.vertices.size(),
                 .index_offset = last_mesh.index_offset + last_mesh.index_count,
                 .index_count = (u32)f.indices.size(),
-                .instance_offset = last_mesh.instance_offset + last_mesh.index_count,
+                .instance_offset = last_mesh.instance_offset + last_mesh.instance_count,
                 .instance_count = model_instance_counts.at(e)
             });
 
@@ -328,13 +328,8 @@ void Renderer::setup_scene() {
             previous_gpu_model = render_scene.models.back();
         }
 
-        const auto instanced_meshes_offset = [&] {
-            if(!previous_gpu_model.model) { return 0ull; }
-            return previous_gpu_model.offset_to_gpu_meshes + model_instance_counts.at(previous_gpu_model.model) * scene.get_model(previous_gpu_model.model).meshes.size();
-        }();
-
         for(u64 idx = 0u; const auto& f : scene.get_model(e.model).meshes) {
-            const auto instanced_mesh_idx = instanced_meshes_offset + parsed_gpu_model_instances[e.model] + idx;
+            const auto instanced_mesh_idx = instanced_models_offsets.at(e.model) + parsed_gpu_model_instances[e.model] + idx;
             auto& instanced_mesh = instanced_meshes.at(instanced_mesh_idx); 
             instanced_mesh.diffuse_texture_idx = add_or_get_material_texture(f.material.diffuse_texture);
             instanced_mesh.normal_texture_idx = add_or_get_material_texture(f.material.normal_texture);

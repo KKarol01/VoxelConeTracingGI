@@ -17,7 +17,6 @@ typedef const char* cstring;
 struct HandleGenerate_T {};
 inline constexpr HandleGenerate_T HandleGenerate;
 
-
 template<typename T> struct Handle;
 
 template<typename T> struct HandleGenerator {
