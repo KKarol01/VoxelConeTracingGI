@@ -12,9 +12,6 @@ VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE
 #include <imgui/backends/imgui_impl_glfw.h>
 #include <imgui/backends/imgui_impl_vulkan.h>
 #include <format>
-#include <numeric>
-#include <slang/slang.h>
-#include <slang/slang-com-ptr.h>
 
 void GpuScene::render(vk::CommandBuffer cmd) {
     cmd.drawIndexedIndirect(indirect_commands_buffer->buffer, 0, draw_count, sizeof(vk::DrawIndexedIndirectCommand));
@@ -209,10 +206,14 @@ void DescriptorSet::update_bindings(vk::Device device, u32 dst_binding, u32 dst_
 }
 
 Buffer::Buffer(std::string_view label, vk::BufferUsageFlags usage, bool map_memory, u64 size)
-    : storage(get_context().renderer->allocator->create_buffer(label, usage, map_memory, size)) { }
+    : storage(get_context().renderer->allocator->create_buffer(label, usage, map_memory, size)) { 
+    buffer = Buffer::operator->()->buffer;
+}
 
 Buffer::Buffer(std::string_view label, vk::BufferUsageFlags usage, bool map_memory, std::span<const std::byte> optional_data)
-    : storage(get_context().renderer->allocator->create_buffer(label, usage, map_memory, optional_data)) { }
+    : storage(get_context().renderer->allocator->create_buffer(label, usage, map_memory, optional_data)) { 
+    buffer = Buffer::operator->()->buffer;
+}
 
 GpuBuffer* Buffer::operator->() { return &get_context().renderer->allocator->get_buffer(storage); }
 
@@ -827,11 +828,11 @@ bool Renderer::initialize_render_passes() {
     };
     global_set.update_bindings(device, 0, 0, global_set_infos);
 
-    const auto res_voxel_albedo = render_graph->add_resource(RGResource{"voxel_albedo", &voxel_albedo});
-    const auto res_voxel_normal = render_graph->add_resource(RGResource{"voxel_normal", &voxel_normal});
-    const auto res_voxel_radiance = render_graph->add_resource(RGResource{"voxel_radiance", &voxel_radiance});
-    const auto res_color_attachment = render_graph->add_resource(RGResource{"color_attachment", nullptr});
-    const auto res_depth_attachment = render_graph->add_resource(RGResource{"depth_attachment", &depth_texture});
+    const auto res_voxel_albedo = render_graph->add_resource(RGResource{"voxel_albedo", voxel_albedo});
+    const auto res_voxel_normal = render_graph->add_resource(RGResource{"voxel_normal", voxel_normal});
+    const auto res_voxel_radiance = render_graph->add_resource(RGResource{"voxel_radiance", voxel_radiance});
+    const auto res_color_attachment = render_graph->add_resource(RGResource{"color_attachment", Texture{}});
+    const auto res_depth_attachment = render_graph->add_resource(RGResource{"depth_attachment", depth_texture});
 
     const auto create_clear_pass = [&](RgResourceHandle resource) {
         RenderPass pass_clear;
@@ -847,7 +848,7 @@ bool Renderer::initialize_render_passes() {
             })
             .set_draw_func([rg = render_graph, resource](vk::CommandBuffer cmd) {
                 const auto& r = rg->get_resource(resource);
-                cmd.clearColorImage((*r.texture)->image, vk::ImageLayout::eTransferDstOptimal, vk::ClearColorValue{0.0f, 0.0f, 0.0f, 0.0f}, vk::ImageSubresourceRange{vk::ImageAspectFlagBits::eColor, 0, vk::RemainingMipLevels, 0, vk::RemainingArrayLayers});
+                cmd.clearColorImage(std::get<1>(r.resource).first.image, vk::ImageLayout::eTransferDstOptimal, vk::ClearColorValue{0.0f, 0.0f, 0.0f, 0.0f}, vk::ImageSubresourceRange{vk::ImageAspectFlagBits::eColor, 0, vk::RemainingMipLevels, 0, vk::RemainingArrayLayers});
             });
         return pass_clear;
     };

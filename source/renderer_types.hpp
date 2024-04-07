@@ -112,6 +112,7 @@ struct Buffer {
     GpuBuffer* operator->();
 
     Handle<GpuBuffer> storage;
+    vk::Buffer buffer;
 };
 
 struct FrameResources {
@@ -151,13 +152,16 @@ struct TextureStorage : Handle<TextureStorage> {
 
 struct Texture {
     constexpr Texture() = default;
-    Texture(Handle<TextureStorage> storage): storage(storage) {}
+    Texture(Handle<TextureStorage> storage): storage(storage) {
+        image = Texture::operator->()->image;
+    }
 
     constexpr operator bool() const noexcept { return static_cast<bool>(storage); }
     TextureStorage* operator->();
     const TextureStorage* operator->() const;
 
     Handle<TextureStorage> storage;
+    vk::Image image;
 };
 
 struct Texture2D : public Texture {

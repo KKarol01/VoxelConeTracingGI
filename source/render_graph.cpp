@@ -138,32 +138,37 @@ void RenderGraph::create_rendering_resources() {
         for(const auto& rp_resource : pass.resources) {
             const auto& rg_resource = resources.at(rp_resource.resource);
 
-            if(!rg_resource.texture) { continue; /*Swapchain image*/ }
+            if(rg_resource.resource.index() == 1) {
+                const auto& [texture, accesses] = std::get<1>(rg_resource.resource);
+                if(!texture) { continue; /*Swapchain image*/ }
 
-            auto view = renderer->device.createImageView(vk::ImageViewCreateInfo{
-                {},
-                (*rg_resource.texture)->image,
-                vk_img_type_to_vk_img_view_type((*rg_resource.texture)->type),
-                rp_resource.texture_info.mutable_format == RGImageFormat::DeduceFromVkImage ? (*rg_resource.texture)->format : to_vk_format(rp_resource.texture_info.mutable_format),
-                {},
-                to_vk_subresource_range(rp_resource.texture_info.range, rp_resource.usage == RGResourceUsage::DepthAttachment ? RGImageAspect::Depth : RGImageAspect::Color)
-            });
-
-            set_debug_name(renderer->device, view, std::format("{}_rgview", rg_resource.name));
-
-            image_views.emplace(std::make_pair(&pass, rp_resource.resource), view);
-
-            if(rp_resource.usage != RGResourceUsage::Image) { continue; }
-            if(pass.pipeline) {
-                auto binding = pass.pipeline->layout.find_binding(rg_resource.name);
-                if(!binding) {
-                    continue;
-                }
-                descriptor_infos.push_back(DescriptorInfo{
-                    to_vk_desc_type(binding->type),
-                    view,
-                    to_vk_layout(rp_resource.texture_info.required_layout)
+                auto view = renderer->device.createImageView(vk::ImageViewCreateInfo{
+                    {},
+                    texture.image,
+                    vk_img_type_to_vk_img_view_type(texture->type),
+                    rp_resource.texture_info.mutable_format == RGImageFormat::DeduceFromVkImage ? texture->format : to_vk_format(rp_resource.texture_info.mutable_format),
+                    {},
+                    to_vk_subresource_range(rp_resource.texture_info.range, rp_resource.usage == RGResourceUsage::DepthAttachment ? RGImageAspect::Depth : RGImageAspect::Color)
                 });
+
+                set_debug_name(renderer->device, view, std::format("{}_rgview", rg_resource.name));
+
+                image_views.emplace(std::make_pair(&pass, rp_resource.resource), view);
+
+                if(rp_resource.usage != RGResourceUsage::Image) { continue; }
+
+                if(pass.pipeline) {
+                    auto binding = pass.pipeline->layout.find_binding(rg_resource.name);
+                    if(!binding) { continue; }
+                    descriptor_infos.push_back(DescriptorInfo{
+                        to_vk_desc_type(binding->type),
+                        view,
+                        to_vk_layout(rp_resource.texture_info.required_layout)
+                    });
+                }
+
+            } else {
+                assert("Implement this!" && false);
             }
         }
 
@@ -263,7 +268,9 @@ RenderGraph::BarrierStages RenderGraph::deduce_stages_and_accesses(const RenderP
 void RenderGraph::bake_graph() {
     using ResourceIndex = u32;
 
+    #ifdef RG_DEBUG_PRINT
     const auto t1 = std::chrono::steady_clock::now();
+    #endif
 
     std::vector<std::vector<ResourceIndex>> stages;
     std::vector<PassDependencies> stage_dependencies;
@@ -281,7 +288,7 @@ void RenderGraph::bake_graph() {
         auto& deps = get_stage_dependencies(stage);
         const auto stages = deduce_stages_and_accesses(src_pass, dst_pass, src_resource, dst_resource, src_read, dst_read);
         auto& graph_resource = resources.at(dst_resource.resource);
-
+            
         vk::ImageMemoryBarrier2 barrier{
             stages.src_stage,
             stages.src_access,
@@ -291,11 +298,11 @@ void RenderGraph::bake_graph() {
             new_layout,
             vk::QueueFamilyIgnored,
             vk::QueueFamilyIgnored,
-            graph_resource.texture ? (*graph_resource.texture)->image : vk::Image{},
+            std::get<1>(graph_resource.resource).first.image,
             to_vk_subresource_range(range, dst_resource.usage == RGResourceUsage::DepthAttachment ? RGImageAspect::Depth : RGImageAspect::Color)
         };
 
-        if(graph_resource.texture) {
+        if(barrier.image) {
             deps.image_barriers.push_back(barrier);
         } else {
             deps.swapchain_image_barrier = barrier;
@@ -315,9 +322,9 @@ void RenderGraph::bake_graph() {
                     auto& prti = pass_resource.texture_info;
                     const auto is_read = pass_resource.is_read;
 
-                    const auto query = graph_resource.texture_accesses.query_layout_changes(prti.range, is_read);
+                    const auto query = std::get<1>(graph_resource.resource).second.query_layout_changes(prti.range, is_read);
                     for(const auto& [layout_access, overlap] : query.accesses) {
-                        const auto& texture_access = graph_resource.texture_accesses.get_layout_texture_access(layout_access);
+                        const auto& texture_access = std::get<1>(graph_resource.resource).second.get_layout_texture_access(layout_access);
                         const auto barrier_stage = pass_stage.at(texture_access.pass) + 1u;    
                         stage = std::max(stage, barrier_stage);
                         const auto& src_resource = *texture_access.pass->get_resource(pass_resource.resource);
@@ -325,7 +332,7 @@ void RenderGraph::bake_graph() {
                     }
                     for(const auto& r : query.previously_unaccessed.ranges) {
                         vk::ImageLayout old_layout{vk::ImageLayout::eUndefined};
-                        if(graph_resource.texture) { old_layout = (*graph_resource.texture)->current_layout; }
+                        if(std::get<1>(graph_resource.resource).first) { old_layout = std::get<1>(graph_resource.resource).first->current_layout; }
                         insert_barrier(0, nullptr, &pass, pass_resource, pass_resource, old_layout, to_vk_layout(pass_resource.texture_info.required_layout), false, is_read, r);
                     }
                 } break;
@@ -339,9 +346,9 @@ void RenderGraph::bake_graph() {
         for(auto& pass_resource : pass.resources) {
             auto& graph_resource = resources.at(pass_resource.resource);
             if(pass_resource.is_read) {
-                graph_resource.texture_accesses.insert_read(RGTextureAccess{&pass, pass_resource.texture_info.required_layout, pass_resource.texture_info.range});
+                std::get<1>(graph_resource.resource).second.insert_read(RGTextureAccess{&pass, pass_resource.texture_info.required_layout, pass_resource.texture_info.range});
             } else {
-                graph_resource.texture_accesses.insert_write(RGTextureAccess{&pass, pass_resource.texture_info.required_layout, pass_resource.texture_info.range});
+                std::get<1>(graph_resource.resource).second.insert_write(RGTextureAccess{&pass, pass_resource.texture_info.required_layout, pass_resource.texture_info.range});
             }
         }
 
@@ -363,9 +370,11 @@ void RenderGraph::bake_graph() {
     }
     passes = std::move(flat_resources);
 
+    #ifdef RG_DEBUG_PRINT
     const auto t2 = std::chrono::steady_clock::now();
     const auto dt = std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count();
     spdlog::info("Baked graph in: {}ns", dt);
+    #endif
 
     #if 0
     for(auto stage=0u,offset=0u; auto c : stage_pass_counts) {
@@ -474,7 +483,7 @@ void RenderGraph::render(vk::CommandBuffer cmd, vk::Image swapchain_image, vk::I
                             vk::ClearColorValue{0.0f, 0.0f, 0.0f, 0.0f}
                         };
 
-                        if(rg_resource.texture) {
+                        if(std::get<1>(rg_resource.resource).first) {
                             attachment.imageView = image_views.at(std::make_pair(&pass, rp_resource.resource));
                             attachment.imageLayout = to_vk_layout(rp_resource.texture_info.required_layout);
                         } else {

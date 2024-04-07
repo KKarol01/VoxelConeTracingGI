@@ -1,18 +1,17 @@
 #pragma once
 #include "types.hpp"
+#include "renderer_types.hpp"
 #include <vector>
 #include <string>
 #include <optional>
 #include <map>
 #include <functional>
+#include <variant>
 
 #if 0
 #define RG_DEBUG_PRINT
 #endif
 
-struct DescriptorSet;
-struct Pipeline;
-struct Texture;
 
 enum class RGResourceType {
     None, Buffer, Texture
@@ -135,8 +134,6 @@ struct RGLayoutRanges {
         ranges = std::move(new_ranges);
     }
 
-
-
     void handle_subdivision(TextureRange range, TextureRange r, std::vector<TextureRange>& new_ranges) {
         /*
             During range subtraction, there are multiple cases. 
@@ -147,7 +144,7 @@ struct RGLayoutRanges {
             Case 1: ( [ ) ] - range () overlaps with only the left part of the range [] -> divide into ()[]
             Case 2: [ ( ] ) - range () ovelaps with only the right part of the range [] -> divide into []()
             Case 3: [ ( ) ] - range () is contained within range [] -> divide into ()[]()
-            Case 4: [( )] -> range () spans exactly the same range of layers as the range [] -> divide by mip regions.
+            Case 4: [(   )] - range () spans exactly the same range of layers as the range [] -> divide by mip regions.
 
             Additionaly, range () can overlap different part of mips in the range []. In all cases,
             a small region of only mips can be either above or below the range ().
@@ -258,48 +255,23 @@ private:
 };
 
 struct RGResource {
-    RGResource(const std::string& name, Texture* texture): name(name), type(RGResourceType::Texture), texture(texture), texture_accesses() {}
+    RGResource(const std::string& name, const Texture& texture): name(name), resource(std::make_pair(texture, RGTextureAccesses{})) {}
 
     RGResource(const RGResource& o) noexcept { *this = o; }
     RGResource& operator=(const RGResource& o) noexcept {
-        assert(o.type == RGResourceType::Texture);
         name = o.name;
-        type = o.type;
-        texture = o.texture;
-        new(&texture_accesses) RGTextureAccesses{};
-        texture_accesses = o.texture_accesses;
+        resource = o.resource;
         return *this;
     }
     RGResource(RGResource&& o) noexcept { *this = std::move(o); }
     RGResource& operator=(RGResource&& o) noexcept {
-        assert(o.type == RGResourceType::Texture);
-        name = std::move(o.name);
-        type = o.type;
-        texture = o.texture;
-        new(&texture_accesses) RGTextureAccesses{};
-        texture_accesses = std::move(o.texture_accesses);
+        name = o.name;
+        resource = std::move(o.resource);
         return *this;
-    }
-    ~RGResource() noexcept {
-        switch (type) {
-            case RGResourceType::Texture: { texture_accesses.~RGTextureAccesses(); } break;
-            default: {
-                spdlog::error("Unhandled destructor in RGResource");
-                std::abort();
-            }
-        }
     }
     
     std::string name;
-    RGResourceType type{RGResourceType::None};
-    union {
-        // Buffer* buffer;
-        Texture* texture;
-    };
-
-    union {
-        RGTextureAccesses texture_accesses;
-    };
+    std::variant<Buffer, std::pair<Texture, RGTextureAccesses>> resource;
 };
 
 struct RPResource {
