@@ -7,6 +7,8 @@
 #include <vulkan/vulkan_to_string.hpp>
 #include <chrono>
 
+#if 0
+
 static constexpr vk::PipelineStageFlags2 to_vk_pipeline_stage(RGSyncStage stage) {
     switch (stage) {
         case RGSyncStage::None:          { return vk::PipelineStageFlagBits2::eNone; }
@@ -105,20 +107,6 @@ static constexpr vk::ImageViewType vk_img_type_to_vk_img_view_type(vk::ImageType
     }
 }
 
-static constexpr vk::DescriptorType to_vk_desc_type(DescriptorType type) {
-    switch (type) {
-        case DescriptorType::SampledImage: { return vk::DescriptorType::eSampledImage; }
-        case DescriptorType::StorageImage: { return vk::DescriptorType::eStorageImage; }
-        case DescriptorType::StorageBuffer: { return vk::DescriptorType::eStorageBuffer; }
-        case DescriptorType::UniformBuffer: { return vk::DescriptorType::eUniformBuffer; }
-        case DescriptorType::Sampler: { return vk::DescriptorType::eSampler; }
-        default: {
-            spdlog::error("Unrecognized descriptor type {}", (u32)type);
-            std::abort();
-        }
-    }
-}
-
 static constexpr vk::Format to_vk_format(RGImageFormat format) {
     switch(format) {
         case RGImageFormat::R32UI: { return vk::Format::eR32Uint; }
@@ -187,8 +175,8 @@ void RenderGraph::create_rendering_resources() {
                 descriptor_infos.push_back(DescriptorInfo{vk::DescriptorType::eSampler, sampler});
             }
             
-            pass.set = new DescriptorSet{renderer->device, renderer->global_desc_pool, pass.pipeline->layout.descriptor_sets.at(1).layout};
-            pass.set->update_bindings(renderer->device, 0, 0, descriptor_infos);
+            // pass.set = new DescriptorSet{renderer->device, renderer->global_desc_pool, pass.pipeline->layout.descriptor_sets.at(1).layout};
+            // pass.set->update_bindings(renderer->device, 0, 0, descriptor_infos);
         }
     }
 }
@@ -457,11 +445,11 @@ void RenderGraph::render(vk::CommandBuffer cmd, vk::Image swapchain_image, vk::I
             if(pass.pipeline) {
                 auto* renderer = get_context().renderer;
                 cmd.bindPipeline(to_vk_bind_point(pass.pipeline->type), pass.pipeline->pipeline);
-                vk::DescriptorSet sets_to_bind[] {
-                    renderer->global_set.set,
-                    pass.set->set,
-                };
-                cmd.bindDescriptorSets(to_vk_bind_point(pass.pipeline->type), pass.pipeline->layout.layout, 0, sets_to_bind, {});
+                // vk::DescriptorSet sets_to_bind[] {
+                //     renderer->global_set.set,
+                //     pass.set->set,
+                // };
+                // cmd.bindDescriptorSets(to_vk_bind_point(pass.pipeline->type), pass.pipeline->layout.layout, 0, sets_to_bind, {});
 
                 if(pass.pipeline->type == PipelineType::Graphics) {
                     std::vector<vk::RenderingAttachmentInfo> color_attachments;
@@ -550,3 +538,5 @@ void RenderGraph::render(vk::CommandBuffer cmd, vk::Image swapchain_image, vk::I
         offset += pass_count;
     }
 }
+
+#endif

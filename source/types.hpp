@@ -28,6 +28,13 @@ template<typename T> struct Handle {
     constexpr Handle() = default;
     constexpr explicit Handle(u64 handle): handle(handle) {}
     constexpr explicit Handle(HandleGenerate_T): Handle(HandleGenerator<T>::generate()) {}
+    constexpr Handle(const Handle& other) noexcept = default;
+    constexpr Handle& operator=(const Handle& other) noexcept = default;
+    constexpr Handle(Handle&& other) noexcept { *this = std::move(other); }
+    constexpr Handle& operator=(Handle&& other) noexcept {
+        handle = std::exchange(other.handle, 0u);
+        return *this;
+    }
     constexpr operator bool() const noexcept { return handle != 0ull; }
     constexpr auto operator<=>(const Handle<T>& other) const noexcept = default;
     u64 handle{0ull}; 

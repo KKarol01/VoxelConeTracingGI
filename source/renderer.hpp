@@ -1,20 +1,15 @@
 #pragma once
 #include "types.hpp"
 #include "renderer_types.hpp"
+#include "descriptor.hpp"
 #include "context.hpp"
-#include "input.hpp"
 #include "scene.hpp"
 #include <vk_mem_alloc.h>
 #include <vulkan/vulkan.hpp>
 #include <GLFW/glfw3.h>
 #include <glm/glm.hpp>
 #include <vector>
-#include <string>
-#include <filesystem>
 #include <array>
-#include <unordered_map>
-#include <memory>
-#include <optional>
 #include <variant>
 
 class RenderGraph;
@@ -112,15 +107,30 @@ public:
     Handle<GpuBuffer> create_buffer(std::string_view label, vk::BufferUsageFlags usage, bool map_memory, u64 size_bytes);
     Handle<GpuBuffer> create_buffer(std::string_view label, vk::BufferUsageFlags usage, bool map_memory, std::span<const std::byte> optional_data = {});
 
-    TextureStorage& get_texture(Handle<TextureStorage> handle) { return find_with_handle(handle, textures); }
-    GpuBuffer& get_buffer(Handle<GpuBuffer> handle) { return find_with_handle(handle, buffers); }
+    void destroy_buffer(Handle<GpuBuffer> handle) {
+        if(!handle) { return; }
+        auto* ptr = find_with_handle(handle, buffers);
+        if(!ptr) { return; }
+        vmaDestroyBuffer(vma, ptr->buffer, ptr->alloc);
+    }
+
+    TextureStorage& get_texture(Handle<TextureStorage> handle) { return *find_with_handle(handle, textures); }
+    GpuBuffer& get_buffer(Handle<GpuBuffer> handle) { return *find_with_handle(handle, buffers); }
+    const GpuBuffer& get_buffer(Handle<GpuBuffer> handle) const { return *find_with_handle(handle, buffers); }
 
     bool has_jobs() const { return !jobs.empty(); }
     void complete_jobs(vk::CommandBuffer cmd);
 
 private:
-    template<typename T> T& find_with_handle(Handle<T> handle, std::vector<T>& storage) {
-        return *std::lower_bound(storage.begin(), storage.end(), handle);
+    template<typename T> T* find_with_handle(Handle<T> handle, std::vector<T>& storage) {
+        auto it = std::lower_bound(storage.begin(), storage.end(), handle);
+        if(it == storage.end() || *it != handle) { return nullptr; }
+        return &*it;
+    }
+    template<typename T> const T* find_with_handle(Handle<T> handle, const std::vector<T>& storage) const {
+        auto it = std::lower_bound(storage.begin(), storage.end(), handle);
+        if(it == storage.end() || *it != handle) { return nullptr; }
+        return &*it;
     }
     GpuBuffer* create_buffer_ptr(std::string_view label, vk::BufferUsageFlags usage, bool map_memory, u64 size_bytes);
     TextureStorage* create_texture_ptr(std::string_view label, const vk::ImageCreateInfo& info);
@@ -175,15 +185,13 @@ public:
         PFN_vkGetDeviceProcAddr get_device_proc_addr;
     } vulkan_function_pointers;
     
+    Handle<DescriptorBufferAllocation> global_set;
+
     vk::DescriptorSetLayout global_set_layout;
     vk::DescriptorSetLayout default_lit_set_layout;
     vk::DescriptorSetLayout voxelize_set_layout;
     vk::DescriptorSetLayout merge_voxels_set_layout;
     vk::DescriptorSetLayout material_set_layout;
-
-    vk::DescriptorPool global_desc_pool;
-    DescriptorSet global_set;
-    DescriptorSet material_set;
 
     Texture3D voxel_albedo, voxel_normal, voxel_radiance;
     Texture2D depth_texture;
@@ -196,7 +204,8 @@ public:
     Pipeline pp_imgui;
     bool recompile_pipelines = false;
 
-    RenderGraph* render_graph;
+    DescriptorBuffer* descriptor_buffer;
+    // RenderGraph* render_graph;
     RendererAllocator* allocator;
     GpuScene render_scene;
 

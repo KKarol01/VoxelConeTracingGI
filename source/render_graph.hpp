@@ -12,7 +12,7 @@
 #define RG_DEBUG_PRINT
 #endif
 
-
+#if 0
 enum class RGResourceType {
     None, Buffer, Texture
 };
@@ -257,12 +257,8 @@ private:
 struct RGResource {
     RGResource(const std::string& name, const Texture& texture): name(name), resource(std::make_pair(texture, RGTextureAccesses{})) {}
 
-    RGResource(const RGResource& o) noexcept { *this = o; }
-    RGResource& operator=(const RGResource& o) noexcept {
-        name = o.name;
-        resource = o.resource;
-        return *this;
-    }
+    RGResource(const RGResource& o) noexcept = delete;
+    RGResource& operator=(const RGResource& o) noexcept = delete;
     RGResource(RGResource&& o) noexcept { *this = std::move(o); }
     RGResource& operator=(RGResource&& o) noexcept {
         name = o.name;
@@ -390,8 +386,8 @@ struct RenderPass {
 
 class RenderGraph {
 public:
-    RgResourceHandle add_resource(const RGResource& resource) {
-        resources.push_back(resource);
+    RgResourceHandle add_resource(RGResource resource) {
+        resources.push_back(std::move(resource));
         return resources.size() - 1;
     }
 
@@ -436,3 +432,4 @@ private:
     std::vector<u32> stage_pass_counts;
     std::map<std::pair<const RenderPass*, RgResourceHandle>, vk::ImageView> image_views;
 };
+#endif

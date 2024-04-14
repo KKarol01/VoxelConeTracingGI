@@ -1,50 +1,58 @@
 #pragma once
+
 #include "types.hpp"
 #include <vulkan/vulkan_structs.hpp>
 #include <vk_mem_alloc.h>
 #include <vector>
 #include <array>
-#include <filesystem>
+#include <variant>
 
 enum class DescriptorType {
     SampledImage, StorageImage, Sampler, UniformBuffer, StorageBuffer, CombinedImageSampler
 };
 
-struct DescriptorInfo {
-    enum Resource : u8 { None=0, Buffer=1, Image=2, Sampler=3 };
+
+inline constexpr vk::DescriptorType to_vk_desc_type(DescriptorType type) {
+    switch (type) {
+        case DescriptorType::SampledImage: { return vk::DescriptorType::eSampledImage; }
+        case DescriptorType::StorageImage: { return vk::DescriptorType::eStorageImage; }
+        case DescriptorType::StorageBuffer: { return vk::DescriptorType::eStorageBuffer; }
+        case DescriptorType::UniformBuffer: { return vk::DescriptorType::eUniformBuffer; }
+        case DescriptorType::Sampler: { return vk::DescriptorType::eSampler; }
+        case DescriptorType::CombinedImageSampler: { return vk::DescriptorType::eCombinedImageSampler; }
+        default: {
+            spdlog::error("Unrecognized descriptor type {}", (u32)type);
+            std::abort();
+        }
+    }
+}
+
+// struct DescriptorInfo {
+//     enum Resource : u8 { None=0, Buffer=1, Image=2, Sampler=3 };
     
-    constexpr DescriptorInfo() {}
-    constexpr DescriptorInfo(vk::DescriptorType type, vk::Buffer buffer, vk::DeviceSize offset, vk::DeviceSize size): 
-        buffer_info(buffer, offset, size),
-        type(type),
-        resource(Buffer) {}
-    constexpr DescriptorInfo(vk::DescriptorType type, vk::ImageView image, vk::ImageLayout layout): 
-        image_info({}, image, layout),
-        type(type),
-        resource(Image) {}
-    constexpr DescriptorInfo(vk::DescriptorType type, vk::Sampler sampler): 
-        image_info(sampler, {}, {}),
-        type(type),
-        resource(Sampler) {}
+//     constexpr DescriptorInfo() {}
+//     constexpr DescriptorInfo(vk::DescriptorType type, vk::Buffer buffer, vk::DeviceSize offset, vk::DeviceSize size): 
+//         buffer_info(buffer, offset, size),
+//         type(type),
+//         resource(Buffer) {}
+//     constexpr DescriptorInfo(vk::DescriptorType type, vk::ImageView image, vk::ImageLayout layout): 
+//         image_info({}, image, layout),
+//         type(type),
+//         resource(Image) {}
+//     constexpr DescriptorInfo(vk::DescriptorType type, vk::Sampler sampler): 
+//         image_info(sampler, {}, {}),
+//         type(type),
+//         resource(Sampler) {}
 
-    union {
-        vk::DescriptorBufferInfo buffer_info;
-        vk::DescriptorImageInfo image_info;
-        vk::DescriptorImageInfo sampler_info;
-    };
-    vk::DescriptorType type;
-    Resource resource{None};
-};
+//     union {
+//         vk::DescriptorBufferInfo buffer_info;
+//         vk::DescriptorImageInfo image_info;
+//         vk::DescriptorImageInfo sampler_info;
+//     };
+//     vk::DescriptorType type;
+//     Resource resource{None};
+// };
 
-struct DescriptorSet {
-    DescriptorSet() = default;
-    DescriptorSet(vk::Device device, vk::DescriptorPool pool, vk::DescriptorSetLayout layout);
-    DescriptorSet(vk::DescriptorSet set): set(set) {}
-
-    void update_bindings(vk::Device device, u32 dst_binding, u32 dst_arr_element, std::span<DescriptorInfo> infos);
-    
-    vk::DescriptorSet set;
-};
 
 struct DescriptorBinding {
     std::string name;
@@ -92,7 +100,7 @@ struct Pipeline {
     PipelineType type{PipelineType::None};
 };
 
-struct GpuBuffer : Handle<GpuBuffer> {
+struct GpuBuffer : public Handle<GpuBuffer> {
     constexpr GpuBuffer() = default;
     GpuBuffer(vk::Buffer buffer, void* data, u64 size, VmaAllocation alloc)
         : Handle(HandleGenerate), buffer(buffer), data(data), size(size) {}
@@ -108,8 +116,18 @@ struct Buffer {
     Buffer(std::string_view label, vk::BufferUsageFlags usage, bool map_memory, u64 size);
     Buffer(std::string_view label, vk::BufferUsageFlags usage, bool map_memory, std::span<const std::byte> optional_data = {});
 
+    Buffer(const Buffer&) = delete;
+    Buffer& operator=(const Buffer&) = delete;
+    constexpr Buffer(Buffer&& other) noexcept { *this = std::move(other); }
+    constexpr Buffer& operator=(Buffer&& other) noexcept {
+        storage = std::move(other.storage);
+        buffer = std::exchange(other.buffer, nullptr);
+        return *this;
+    }
+
     constexpr operator bool() const noexcept { return static_cast<bool>(storage); }
     GpuBuffer* operator->();
+    const GpuBuffer* operator->() const;
 
     Handle<GpuBuffer> storage;
     vk::Buffer buffer;
@@ -122,7 +140,7 @@ struct FrameResources {
     vk::Fence in_flight_fence;
 };
 
-struct TextureStorage : Handle<TextureStorage> {
+struct TextureStorage : public Handle<TextureStorage> {
     constexpr TextureStorage() = default;
     TextureStorage(
         vk::ImageType type,

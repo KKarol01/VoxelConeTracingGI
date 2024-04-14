@@ -63,12 +63,29 @@ std::vector<ShaderResource> get_shader_resources(const std::vector<u32>& ir) {
             // const auto& type = compiler.get_type(r.base_type_id); // for later use
             const auto set = compiler.get_decoration(r.id, spv::Decoration::DecorationDescriptorSet);
             const auto binding = compiler.get_decoration(r.id, spv::Decoration::DecorationBinding);
+            const auto& type = compiler.get_type(r.base_type_id);
+            const auto is_struct = type.basetype == spirv_cross::SPIRType::Struct;
+            const auto count = [is_struct, &r, &compiler, &type] {
+                if(is_struct && type.member_types.empty()) { return false; }
+
+                const auto& last_type = is_struct ? compiler.get_type(type.member_types.back()) : type;
+                
+                if(last_type.array.empty()) { return false; }
+                if(last_type.array.size() > 1u) { return false; }
+                if(last_type.array_size_literal[0] == false) {
+                    spdlog::error("SPIRV_CROSS array size literal at index 0 is false.");
+                    std::terminate();
+                }
+                return last_type.array[0] == 0u;
+            }();
+
             shader_resources.push_back(ShaderResource{
                 .descriptor_set = set,
                 .resource = {
                     .name = r.name,
                     .type = res_type,
-                    .binding = binding
+                    .binding = binding,
+                    // .count = count
                 }
             });
         }
@@ -172,7 +189,7 @@ Pipeline PipelineBuilder::build_graphics(std::string_view label) {
     // RasterizationState_.pNext = &conservative_rasterization;
 
     vk::GraphicsPipelineCreateInfo info{
-        {},
+        vk::PipelineCreateFlagBits::eDescriptorBufferEXT,
         stages,
         &VertexInputState_,
         &InputAssemblyState_,
@@ -206,7 +223,7 @@ Pipeline PipelineBuilder::build_compute(std::string_view label) {
     set_debug_name(renderer->device, layout.layout, std::format("{}_layout", label));
     
     vk::ComputePipelineCreateInfo info{
-        {},
+        vk::PipelineCreateFlagBits::eDescriptorBufferEXT,
         vk::PipelineShaderStageCreateInfo{
             {}, shaders.at(0).first, shaders.at(0).second->module, "main"
         },
@@ -221,23 +238,6 @@ Pipeline PipelineBuilder::build_compute(std::string_view label) {
         .layout = layout,
         .type = PipelineType::Compute
     };
-}
-
-static vk::DescriptorType to_vk_desc_type(DescriptorType type) {
-    switch (type) {
-        using enum DescriptorType;
-        case SampledImage:   { return vk::DescriptorType::eSampledImage; }
-        case StorageImage:   { return vk::DescriptorType::eStorageImage; }
-        case Sampler:        { return vk::DescriptorType::eSampler; }
-        case UniformBuffer:  { return vk::DescriptorType::eUniformBuffer; }
-        case StorageBuffer:  { return vk::DescriptorType::eStorageBuffer; }
-        case CombinedImageSampler:  { return vk::DescriptorType::eCombinedImageSampler; }
-        default: {
-            spdlog::error("Unrecognized descriptor type: {}", (u32)type);
-            std::abort(); 
-            return vk::DescriptorType::eSampler;
-        }
-    }
 }
 
 PipelineLayout PipelineBuilder::coalesce_shader_resources_into_layout() {
@@ -279,7 +279,7 @@ PipelineLayout PipelineBuilder::coalesce_shader_resources_into_layout() {
     std::vector<vk::DescriptorSetLayout> set_layouts(PipelineLayout::MAX_DESCRIPTOR_SET_COUNT);
     for(u32 i=0; auto& lb : layout_bindings) {
         layout.descriptor_sets.at(i).layout = get_context().renderer->device.createDescriptorSetLayout(vk::DescriptorSetLayoutCreateInfo{
-            {},
+            vk::DescriptorSetLayoutCreateFlagBits::eDescriptorBufferEXT,
             lb
         });
         set_layouts.at(i) = layout.descriptor_sets.at(i).layout;

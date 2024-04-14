@@ -1,20 +1,20 @@
+#include <vulkan/vulkan.hpp>
+VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE
 #include "renderer.hpp"
 #include "input.hpp"
 #include "pipelines.hpp"
-#include "render_graph.hpp"
-#include <vulkan/vulkan.hpp>
-VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE
+// #include "render_graph.hpp"
+#include "descriptor.hpp"
 #include <spdlog/spdlog.h>
 #include <glm/gtc/matrix_transform.hpp>
 #include <VkBootstrap.h>
-#include <stb/stb_include.h>
 #include <imgui/imgui.h>
 #include <imgui/backends/imgui_impl_glfw.h>
 #include <imgui/backends/imgui_impl_vulkan.h>
 #include <format>
 
 void GpuScene::render(vk::CommandBuffer cmd) {
-    cmd.drawIndexedIndirect(indirect_commands_buffer->buffer, 0, draw_count, sizeof(vk::DrawIndexedIndirectCommand));
+    cmd.drawIndexedIndirect(indirect_commands_buffer.buffer, 0, draw_count, sizeof(vk::DrawIndexedIndirectCommand));
 }
 
 Handle<TextureStorage> RendererAllocator::create_texture_storage(std::string_view label, const vk::ImageCreateInfo& info, std::span<const std::byte> optional_data) {
@@ -170,41 +170,6 @@ TextureStorage* RendererAllocator::create_texture_ptr(std::string_view label, co
     return &texture;
 }
 
-DescriptorSet::DescriptorSet(vk::Device device, vk::DescriptorPool pool, vk::DescriptorSetLayout layout) {
-    set = device.allocateDescriptorSets(vk::DescriptorSetAllocateInfo{pool, layout})[0];
-}
-
-void DescriptorSet::update_bindings(vk::Device device, u32 dst_binding, u32 dst_arr_element, std::span<DescriptorInfo> infos) {
-    std::vector<vk::WriteDescriptorSet> writes(infos.size());
-    for(u32 i=0; i<infos.size(); ++i) {
-        auto &write = writes.at(i);
-        write.dstSet = set;
-        write.dstBinding = dst_binding + i;
-        write.dstArrayElement = dst_arr_element;
-
-        const auto &info = infos.data()[i];
-        write.descriptorCount = 1;
-        write.descriptorType = info.type;
-        switch(info.resource) {
-            case DescriptorInfo::None: {
-                write.descriptorCount = 0;
-                break;
-            }
-            case DescriptorInfo::Buffer: {
-                write.pBufferInfo = &info.buffer_info;
-                break;
-            }
-            case DescriptorInfo::Image:
-            case DescriptorInfo::Sampler: {
-                write.pImageInfo = &info.image_info;
-                break;
-            }
-        } 
-    }
-
-    device.updateDescriptorSets(writes, {});
-}
-
 Buffer::Buffer(std::string_view label, vk::BufferUsageFlags usage, bool map_memory, u64 size)
     : storage(get_context().renderer->allocator->create_buffer(label, usage, map_memory, size)) { 
     buffer = Buffer::operator->()->buffer;
@@ -216,6 +181,8 @@ Buffer::Buffer(std::string_view label, vk::BufferUsageFlags usage, bool map_memo
 }
 
 GpuBuffer* Buffer::operator->() { return &get_context().renderer->allocator->get_buffer(storage); }
+
+const GpuBuffer* Buffer::operator->() const { return &get_context().renderer->allocator->get_buffer(storage); }
 
 TextureStorage* Texture::operator->() { return &get_context().renderer->allocator->get_texture(storage); }
 
@@ -441,8 +408,73 @@ void Renderer::render() {
 
     cmd.bindVertexBuffers(0, render_scene.vertex_buffer->buffer, 0ull);
     cmd.bindIndexBuffer(render_scene.index_buffer->buffer, 0, vk::IndexType::eUint32);
+    cmd.bindDescriptorBuffersEXT(vk::DescriptorBufferBindingInfoEXT{
+        descriptor_buffer->get_buffer_address(),
+        vk::BufferUsageFlagBits::eResourceDescriptorBufferEXT | vk::BufferUsageFlagBits::eSamplerDescriptorBufferEXT | vk::BufferUsageFlagBits::eShaderDeviceAddress
+    });
 
-    render_graph->render(cmd, swapchain_images.at(img), swapchain_views.at(img));
+    cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, pp_default_lit.pipeline);
+
+    u32 buffers[] {0};
+    u64 buffer_offsets[] {0};
+
+    cmd.setDescriptorBufferOffsetsEXT(
+        vk::PipelineBindPoint::eGraphics,
+        pp_default_lit.layout.layout,
+        0, 
+        buffers,
+        buffer_offsets
+    );
+
+    vk::ImageMemoryBarrier2 to_color{
+        vk::PipelineStageFlagBits2::eTopOfPipe,
+        vk::AccessFlagBits2::eNone,
+        vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+        vk::AccessFlagBits2::eColorAttachmentWrite,
+        vk::ImageLayout::eUndefined,
+        vk::ImageLayout::eColorAttachmentOptimal,
+        {}, {}, swapchain_images.at(img), {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1}
+    };
+    vk::ImageMemoryBarrier2 to_depth{
+        vk::PipelineStageFlagBits2::eTopOfPipe,
+        vk::AccessFlagBits2::eNone,
+        vk::PipelineStageFlagBits2::eAllCommands,
+        vk::AccessFlagBits2::eDepthStencilAttachmentRead | vk::AccessFlagBits2::eDepthStencilAttachmentWrite,
+        vk::ImageLayout::eUndefined,
+        vk::ImageLayout::eDepthAttachmentOptimal,
+        {}, {}, depth_texture->image, {vk::ImageAspectFlagBits::eDepth, 0, 1, 0, 1}
+    };
+    vk::ImageMemoryBarrier2 to_pres{
+        vk::PipelineStageFlagBits2::eColorAttachmentOutput,
+        vk::AccessFlagBits2::eColorAttachmentWrite,
+        vk::PipelineStageFlagBits2::eBottomOfPipe,
+        vk::AccessFlagBits2::eNone,
+        vk::ImageLayout::eColorAttachmentOptimal,
+        vk::ImageLayout::ePresentSrcKHR,
+        {}, {}, swapchain_images.at(img), {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1}
+    };
+    cmd.pipelineBarrier2(vk::DependencyInfo{ {}, {}, {}, to_color });
+    cmd.pipelineBarrier2(vk::DependencyInfo{ {}, {}, {}, to_depth });
+
+    vk::RenderingAttachmentInfo colors[]{{swapchain_views.at(img), vk::ImageLayout::eAttachmentOptimal, {}, {}, {}, vk::AttachmentLoadOp::eClear, vk::AttachmentStoreOp::eStore, vk::ClearColorValue{0.0f, 0.0f, 0.0f, 0.0f}}};
+    vk::RenderingAttachmentInfo depth{depth_texture->default_view, vk::ImageLayout::eDepthAttachmentOptimal, {}, {}, {}, vk::AttachmentLoadOp::eClear, vk::AttachmentStoreOp::eStore, vk::ClearDepthStencilValue{1.0f, 0}};
+    cmd.beginRendering(vk::RenderingInfo{
+        {},
+        {{}, {1024, 768}},
+        1,
+        0,
+        colors,
+        &depth
+    });
+
+    cmd.setViewportWithCount(vk::Viewport{0.0f, 0.0f, 1024.0f, 768.0f, 0.0f, 1.0f});
+    cmd.setScissorWithCount(vk::Rect2D{{0,0}, {1024, 768}});
+
+    render_scene.render(cmd);
+    cmd.endRendering();
+
+    cmd.pipelineBarrier2(vk::DependencyInfo{ {}, {}, {}, to_pres });
+    // render_graph->render(cmd, swapchain_images.at(img), swapchain_views.at(img));
 
     // draw_ui(cmd, swapchain_views.at(img));
 
@@ -456,8 +488,6 @@ void Renderer::render() {
         fr.rendering_semaphore, swapchain, image_indices
     });
 
-    // vkCmdDrawIndexedIndirectCount(VkCommandBuffer commandBuffer, VkBuffer buffer, VkDeviceSize offset, VkBuffer countBuffer, VkDeviceSize countBufferOffset, uint32_t maxDrawCount, uint32_t stride)
-    
     device.waitIdle();
 
     for(auto& e : deletion_queue) { e(); }
@@ -470,7 +500,6 @@ bool Renderer::initialize_vulkan() {
     }
 
     VULKAN_HPP_DEFAULT_DISPATCHER.init();
-
     vkb::InstanceBuilder instance_builder;
     auto instance_result = instance_builder
         .set_app_name("vxgi")
@@ -485,6 +514,7 @@ bool Renderer::initialize_vulkan() {
         return false;
     }
     instance = instance_result->instance;
+    VULKAN_HPP_DEFAULT_DISPATCHER.init(instance_result->fp_vkGetInstanceProcAddr);
     VULKAN_HPP_DEFAULT_DISPATCHER.init(instance);
 
     VkSurfaceKHR _surface;
@@ -498,6 +528,7 @@ bool Renderer::initialize_vulkan() {
     vkb::PhysicalDeviceSelector pdev_sel{instance_result.value(), _surface};
     auto pdev_sel_result = pdev_sel
         .set_minimum_version(1, 3)
+        .add_required_extension(VK_EXT_DESCRIPTOR_BUFFER_EXTENSION_NAME)
         .select();
     if(!pdev_sel_result) {
         spdlog::error("Vulkan: failed to find suitable physical device: {}", pdev_sel_result.error().message());
@@ -505,14 +536,16 @@ bool Renderer::initialize_vulkan() {
     }
     physical_device = pdev_sel_result->physical_device;
 
-    vk::PhysicalDeviceFeatures2 features;
-    vk::PhysicalDeviceDescriptorIndexingFeatures desc_idx_features;
-    vk::PhysicalDeviceDynamicRenderingFeatures dyn_rend_features;
-    vk::PhysicalDeviceHostQueryResetFeatures host_query_features;
     vk::PhysicalDeviceSynchronization2Features synch2_features;
     synch2_features.synchronization2 = true;
+
+    vk::PhysicalDeviceHostQueryResetFeatures host_query_features;
     host_query_features.hostQueryReset = true;
+
+    vk::PhysicalDeviceDynamicRenderingFeatures dyn_rend_features;
     dyn_rend_features.dynamicRendering = true;
+
+    vk::PhysicalDeviceDescriptorIndexingFeatures desc_idx_features;
     desc_idx_features.descriptorBindingVariableDescriptorCount = true;
     desc_idx_features.descriptorBindingPartiallyBound = true;
     desc_idx_features.shaderSampledImageArrayNonUniformIndexing = true;
@@ -520,10 +553,19 @@ bool Renderer::initialize_vulkan() {
     desc_idx_features.descriptorBindingSampledImageUpdateAfterBind = true;
     desc_idx_features.descriptorBindingStorageImageUpdateAfterBind = true;
     desc_idx_features.runtimeDescriptorArray = true;
+
+    vk::PhysicalDeviceDescriptorBufferFeaturesEXT desc_buffer_features;
+    desc_buffer_features.descriptorBuffer = true;
+    desc_buffer_features.descriptorBufferPushDescriptors = true;
+
+    vk::PhysicalDeviceBufferDeviceAddressFeatures dev_addr_features;
+    dev_addr_features.bufferDeviceAddress = true;
+    
+    vk::PhysicalDeviceFeatures2 features;
     features.features.fragmentStoresAndAtomics = true;
     features.features.geometryShader = true;
     features.features.multiDrawIndirect = true;
-
+    
     vkb::DeviceBuilder device_builder{pdev_sel_result.value()};
     auto device_builder_result = device_builder
         .add_pNext(&features)
@@ -531,6 +573,8 @@ bool Renderer::initialize_vulkan() {
         .add_pNext(&dyn_rend_features)
         .add_pNext(&host_query_features)
         .add_pNext(&synch2_features)
+        .add_pNext(&dev_addr_features)
+        .add_pNext(&desc_buffer_features)
         .build();
     if(!device_builder_result) {
         spdlog::error("Vulkan: failed to create device: {}", device_builder_result.error().message());
@@ -549,6 +593,7 @@ bool Renderer::initialize_vulkan() {
         .vkGetDeviceProcAddr = instance_result->fp_vkGetDeviceProcAddr
     };
     VmaAllocatorCreateInfo vma_info{
+        .flags = VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT,
         .physicalDevice = physical_device,
         .device = device,
         .pVulkanFunctions = &vma_vk_funcs,
@@ -616,10 +661,23 @@ bool Renderer::initialize_frame_resources() {
         set_debug_name(device, frames.at(i).in_flight_fence, std::format("frame_in_flight_fence_{}", i));
     }
 
+    descriptor_buffer = new DescriptorBuffer{physical_device, device};
+    const auto layouts = descriptor_buffer->push_layouts({
+        {"global_set_layout", {
+            {DescriptorType::UniformBuffer, 1}
+        }},
+        // {"material_set_layout", {
+        //     {DescriptorType::StorageBuffer, 1},
+        //     {DescriptorType::SampledImage, 512, true},
+        // }},
+    });
+    global_set = layouts.at(0);
+
     return true;
 }
 
 bool Renderer::initialize_imgui() {
+    #if 0
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO(); (void)io;
@@ -654,11 +712,13 @@ bool Renderer::initialize_imgui() {
         return false;
     }
 
+    #endif
+
     return true;
 }
 
 bool Renderer::initialize_render_passes() {
-    render_graph = new RenderGraph{};
+    // render_graph = new RenderGraph{};
     
     std::vector<std::filesystem::path> shader_paths{
         "default_lit.vert",
@@ -689,12 +749,7 @@ bool Renderer::initialize_render_passes() {
         ++i;
     }
 
-    static constexpr vk::ShaderStageFlags all_stages = 
-        vk::ShaderStageFlagBits::eVertex | 
-        vk::ShaderStageFlagBits::eGeometry | 
-        vk::ShaderStageFlagBits::eFragment | 
-        vk::ShaderStageFlagBits::eCompute;
-
+    #if 0
     vk::DescriptorSetLayoutBinding global_set_bindings[] {
         vk::DescriptorSetLayoutBinding{0, vk::DescriptorType::eUniformBuffer, 1, all_stages},
     };
@@ -748,6 +803,7 @@ bool Renderer::initialize_render_passes() {
         &material_variable_alloc_info
     })[0];
     material_set = DescriptorSet{material_vk_set};
+    #endif
 
     voxel_albedo = Texture3D{"voxel_albedo", 256, 256, 256, vk::Format::eR32Uint, 1, vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eTransferSrc | vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled};
     voxel_normal = Texture3D{"voxel_normal", 256, 256, 256, vk::Format::eR32Uint, 1, vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eTransferSrc | vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled};
@@ -821,8 +877,12 @@ bool Renderer::initialize_render_passes() {
         .build_graphics("imgui_pipeline");
 
     glm::mat4 global_buffer_size[2];
-    global_buffer = Buffer{"global_ubo", vk::BufferUsageFlagBits::eUniformBuffer, true, std::as_bytes(std::span{global_buffer_size})};
+    global_buffer = Buffer{"global_ubo", vk::BufferUsageFlagBits::eUniformBuffer | vk::BufferUsageFlagBits::eShaderDeviceAddress, true, std::as_bytes(std::span{global_buffer_size})};
+    descriptor_buffer->allocate_descriptor(global_set, 0, DescriptorBufferDescriptor{
+        DescriptorType::UniformBuffer, std::make_tuple(global_buffer.storage, sizeof(global_buffer_size))
+    });
 
+    #if 0
     DescriptorInfo global_set_infos[] {
         DescriptorInfo{vk::DescriptorType::eUniformBuffer, global_buffer->buffer, 0, vk::WholeSize},
     };
@@ -1006,6 +1066,7 @@ bool Renderer::initialize_render_passes() {
     render_graph->add_render_pass(pass_presentation);
 
     render_graph->bake_graph();
+    #endif
 
     return true;
 }
@@ -1093,6 +1154,7 @@ void Renderer::load_waiting_textures(vk::CommandBuffer cmd) {
 }
 
 void Renderer::draw_ui(vk::CommandBuffer cmd, vk::ImageView swapchain_view) {
+    #if 0
     cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, pp_imgui.pipeline);
     vk::RenderingAttachmentInfo color_view{
         swapchain_view,
@@ -1154,4 +1216,5 @@ void Renderer::draw_ui(vk::CommandBuffer cmd, vk::ImageView swapchain_view) {
     ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), get_frame_res().cmd);
 
     cmd.endRendering();
+    #endif
 }
