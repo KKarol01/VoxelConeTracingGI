@@ -7,176 +7,278 @@
 #include <vulkan/vulkan_to_string.hpp>
 #include <chrono>
 
-#if 0
+#if 1
 
-static constexpr vk::PipelineStageFlags2 to_vk_pipeline_stage(RGSyncStage stage) {
-    switch (stage) {
-        case RGSyncStage::None:          { return vk::PipelineStageFlagBits2::eNone; }
-        case RGSyncStage::Transfer:      { return vk::PipelineStageFlagBits2::eTransfer; }
-        case RGSyncStage::Fragment:      { return vk::PipelineStageFlagBits2::eFragmentShader; }
-        case RGSyncStage::EarlyFragment: { return vk::PipelineStageFlagBits2::eEarlyFragmentTests; }
-        case RGSyncStage::LateFragment:  { return vk::PipelineStageFlagBits2::eLateFragmentTests; }
-        case RGSyncStage::Compute:       { return vk::PipelineStageFlagBits2::eComputeShader; }
-        case RGSyncStage::ColorAttachmentOutput: { return vk::PipelineStageFlagBits2::eColorAttachmentOutput; }
-        case RGSyncStage::AllGraphics: { return vk::PipelineStageFlagBits2::eAllGraphics; }
-        default: {
-            spdlog::error("Unrecognized RGSyncStage {}", (u32)stage);
-            std::abort();
-        }
-    }
+static constexpr vk::PipelineStageFlags2 to_vk_pipeline_stage(RGSyncStage stage);
+static constexpr vk::ImageAspectFlags to_vk_aspect(RGImageAspect aspect);
+static constexpr vk::ImageSubresourceRange to_vk_subresource_range(TextureRange range, RGImageAspect aspect);
+static constexpr vk::ImageLayout to_vk_layout(RGImageLayout layout);
+static constexpr vk::AttachmentLoadOp to_vk_load_op(RGAttachmentLoadStoreOp op);
+static constexpr vk::AttachmentStoreOp to_vk_store_op(RGAttachmentLoadStoreOp op);
+static constexpr vk::PipelineBindPoint to_vk_bind_point(PipelineType type);
+static constexpr vk::ImageViewType vk_img_type_to_vk_img_view_type(vk::ImageType type);
+static constexpr vk::Format to_vk_format(RGImageFormat format);
+
+bool TextureRange::intersects(TextureRange r) const {
+    return (
+        base_layer < r.base_layer + r.layers &&
+        base_layer + layers > r.base_layer &&
+        base_mip < r.base_mip + r.mips &&
+        base_mip + mips > r.base_mip
+    );
 }
 
-static constexpr vk::ImageAspectFlags to_vk_aspect(RGImageAspect aspect) {
-    switch (aspect) {
-        case RGImageAspect::Color: { return vk::ImageAspectFlagBits::eColor; }
-        case RGImageAspect::Depth: { return vk::ImageAspectFlagBits::eDepth; }
-        default: {
-            spdlog::error("Unrecognized RgImageAspect: {}", (u32)aspect);
-            std::abort();
-        }
-    }
+bool TextureRange::fully_contains(TextureRange r) const {
+    return (
+        base_mip <= r.base_mip &&
+        base_mip + mips >= r.base_mip + r.mips &&
+        base_layer <= r.base_layer &&
+        base_layer + layers >= r.base_layer + r.layers
+    );
 }
 
-static constexpr vk::ImageSubresourceRange to_vk_subresource_range(TextureRange range, RGImageAspect aspect) {
-    return vk::ImageSubresourceRange{
-        to_vk_aspect(aspect),
-        range.base_mip, range.mips,
-        range.base_layer, range.layers
+TextureRange TextureRange::get_overlap(TextureRange r) const {
+    const auto a = std::max(base_mip, r.base_mip);
+    const auto b = std::max(base_layer, r.base_layer);
+    const auto x = std::min(base_mip+mips, r.base_mip+r.mips);
+    const auto y = std::min(base_layer+layers, r.base_layer+r.layers);
+    return TextureRange{
+        .base_mip = a,
+        .mips = x - std::min(x, a),
+        .base_layer = b,
+        .layers = y - std::min(y, b)
     };
 }
 
-static constexpr vk::ImageLayout to_vk_layout(RGImageLayout layout) {
-    switch(layout) {
-        case RGImageLayout::Attachment: { return vk::ImageLayout::eAttachmentOptimal; }
-        case RGImageLayout::General: { return vk::ImageLayout::eGeneral; }
-        case RGImageLayout::ReadOnly: { return vk::ImageLayout::eShaderReadOnlyOptimal; }
-        case RGImageLayout::TransferSrc: { return vk::ImageLayout::eTransferSrcOptimal; }
-        case RGImageLayout::TransferDst: { return vk::ImageLayout::eTransferDstOptimal; }
-        case RGImageLayout::PresentSrc: { return vk::ImageLayout::ePresentSrcKHR; }
-        case RGImageLayout::Undefined: { return vk::ImageLayout::eUndefined; }
-        default: {
-            spdlog::error("Unrecognized RGImageLayout: {}", (u32)layout);
-            std::abort();
-        }
-    }
+void RGLayoutRanges::subtract(TextureRange range) {
+    std::vector<TextureRange> new_ranges;
+    new_ranges.reserve(ranges.size());
+
+    for(auto& r : ranges) {
+        if(!range.intersects(r)) { new_ranges.push_back(r); continue; }
+        if(range.fully_contains(r)) { continue; }
+        handle_subdivision(range, r, new_ranges);
+    }   
+
+    new_ranges.shrink_to_fit();
+    ranges = std::move(new_ranges);
 }
 
-static constexpr vk::AttachmentLoadOp to_vk_load_op(RGAttachmentLoadStoreOp op) {
-    switch(op) {
-        case RGAttachmentLoadStoreOp::DontCare: { return vk::AttachmentLoadOp::eDontCare; }
-        case RGAttachmentLoadStoreOp::Clear: { return vk::AttachmentLoadOp::eClear; }
-        case RGAttachmentLoadStoreOp::Load: { return vk::AttachmentLoadOp::eLoad; }
-        default: {
-            spdlog::error("Unrecognized RGAttachmentLoadOp {}", (u32)op);
-            std::abort();
-        }
+void RGLayoutRanges::handle_subdivision(TextureRange range, TextureRange r, std::vector<TextureRange>& new_ranges) {
+    /*
+        During range subtraction, there are multiple cases. 
+        Let [] denote a range which the intersection with another range, (), 
+        will be subtracted from.
+
+        Each range is a continous range of layers, that each have equal number of mips.
+        Case 1: ( [ ) ] - range () overlaps with only the left part of the range [] -> divide into ()[]
+        Case 2: [ ( ] ) - range () ovelaps with only the right part of the range [] -> divide into []()
+        Case 3: [ ( ) ] - range () is contained within range [] -> divide into ()[]()
+        Case 4: [(   )] - range () spans exactly the same range of layers as the range [] -> divide by mip regions.
+
+        Additionaly, range () can overlap different part of mips in the range []. In all cases,
+        a small region of only mips can be either above or below the range ().
+    */
+
+    const auto overlap = range.get_overlap(r);
+
+    if(range.base_layer <= r.base_layer && range.base_layer + range.layers < r.base_layer + r.layers) {
+        // Case 1
+        handle_mips(overlap, r, new_ranges);
+        r.layers = r.base_layer + r.layers - (overlap.base_layer + overlap.layers);
+        r.base_layer = overlap.base_layer + overlap.layers;
+    } else if(range.base_layer > r.base_layer && range.base_layer + range.layers <= r.base_layer + r.layers) {
+        // Case 2
+        handle_mips(overlap, r, new_ranges);
+        r.layers = overlap.base_layer;
+    } else if(range.base_layer > r.base_layer && range.base_layer + range.layers < r.base_layer + r.layers) {
+        // Case 3
+        handle_mips(overlap, r, new_ranges);
+        auto right = r;
+        right.layers = right.base_layer + right.layers - (overlap.base_layer + overlap.layers);
+        right.base_layer = overlap.base_layer + overlap.layers;
+        new_ranges.push_back(right);
+        r.layers = overlap.base_layer;
+    } else if(range.base_layer == r.base_layer && range.layers == r.layers) {
+        // Case 4
+        handle_mips(overlap, r, new_ranges);
+        return;
+    } else {
+        spdlog::error("No more cases to cover. This is an error.");
+        std::abort();
     }
+
+    new_ranges.push_back(r);
 }
 
-static constexpr vk::AttachmentStoreOp to_vk_store_op(RGAttachmentLoadStoreOp op) {
-    switch(op) {
-        case RGAttachmentLoadStoreOp::DontCare: { return vk::AttachmentStoreOp::eDontCare; }
-        case RGAttachmentLoadStoreOp::Store: { return vk::AttachmentStoreOp::eStore; }
-        case RGAttachmentLoadStoreOp::None: { return vk::AttachmentStoreOp::eNone; }
-        default: {
-            spdlog::error("Unrecognized RGAttachmentStoreOp {}", (u32)op);
-            std::abort();
-        }
+void RGLayoutRanges::handle_mips(TextureRange overlap, TextureRange r, std::vector<TextureRange>& new_ranges) {
+    r.base_layer = overlap.base_layer;
+    r.layers = overlap.layers;
+    if(r.base_mip < overlap.base_mip) {
+        r.mips = overlap.base_mip;
+    } else if(r.base_mip > overlap.base_mip) {
+        r.mips = r.base_mip + r.mips - (overlap.base_mip + overlap.mips);
+        r.base_mip = overlap.base_mip + overlap.mips;
+    } else {
+        return;
     }
+    new_ranges.push_back(r);
+}
+    
+void RGTextureAccesses::insert_read(RGTextureAccess access) {
+    layouts.emplace_back(last_read.size(), true);
+    last_read.push_back(access);
 }
 
-static constexpr vk::PipelineBindPoint to_vk_bind_point(PipelineType type) { 
-    switch (type) {
-        case PipelineType::Compute: { return vk::PipelineBindPoint::eCompute; }
-        case PipelineType::Graphics: { return vk::PipelineBindPoint::eGraphics; }
-        default: {
-            spdlog::error("Unrecognized PipelineType {}", (u32)type);
-            std::abort();
-        } 
-    }
+void RGTextureAccesses::insert_write(RGTextureAccess access) {
+    layouts.emplace_back(last_written.size(), false);
+    last_written.push_back(access);
 }
 
-static constexpr vk::ImageViewType vk_img_type_to_vk_img_view_type(vk::ImageType type) {
-    switch(type) {
-        case vk::ImageType::e2D: { return vk::ImageViewType::e2D; }
-        case vk::ImageType::e3D: { return vk::ImageViewType::e3D; }
-        default: {
-            spdlog::error("Unsupported vk::ImageType {}", (u32)type);
-            std::abort();
-        }
-    }
+RGTextureAccess& RGTextureAccesses::get_layout_texture_access(RGLayoutAccess access) {
+    auto* vec = &last_read;
+    if(!access.is_read) { vec = &last_written; }
+    return vec->at(access.access_idx);
 }
 
-static constexpr vk::Format to_vk_format(RGImageFormat format) {
-    switch(format) {
-        case RGImageFormat::R32UI: { return vk::Format::eR32Uint; }
-        case RGImageFormat::RGBA8Unorm: { return vk::Format::eR8G8B8A8Unorm; }
-        default: {
-            spdlog::error("Unrecognized RGImageFormat {}", (u32)format);
-            std::abort();
+const RGTextureAccess& RGTextureAccesses::get_layout_texture_access(RGLayoutAccess access) const {
+    auto* vec = &last_read;
+    if(!access.is_read) { vec = &last_written; }
+    return vec->at(access.access_idx);
+}
+
+RGLayoutChangeQuery RGTextureAccesses::query_layout_changes(TextureRange range, bool is_read) const {
+    RGLayoutChangeQuery query;
+    query.previously_unaccessed.ranges.push_back(range);
+    for(auto it = layouts.rbegin(); it != layouts.rend(); ++it) {
+        auto& access = *it;
+        auto& txt_access = access.is_read ? last_read.at(access.access_idx) : last_written.at(access.access_idx);
+        if(auto overlap = txt_access.range.get_overlap(range); overlap.mips * overlap.layers != 0u) {
+            if(std::find_if(begin(query.accesses), end(query.accesses), [&overlap](auto& e) { return e.second.fully_contains(overlap); }) == end(query.accesses)) {
+                query.accesses.emplace_back(access, overlap);
+                query.previously_unaccessed.subtract(overlap);
+            }
         }
+
+        if(query.previously_unaccessed.empty()) { break; }
     }
+
+    return query;
+}
+
+RenderPass& RenderPass::set_name(const std::string& name) {
+    this->name = name;
+    return *this;
+}
+
+RenderPass& RenderPass::set_draw_func(std::function<void(vk::CommandBuffer)>&& f) {
+    func = std::move(f);
+    return *this;
+}
+
+RenderPass& RenderPass::write_to_image(RPResource info) {
+    info.usage = RGResourceUsage::Image;
+    info.is_read = false;
+    resources.push_back(info);
+    return *this;
+}
+
+RenderPass& RenderPass::read_from_image(RPResource info) {
+    info.usage = RGResourceUsage::Image;
+    info.is_read = true;
+    resources.push_back(info);
+    return *this;
+}
+
+RenderPass& RenderPass::write_color_attachment(RPResource info) {
+    info.usage = RGResourceUsage::ColorAttachment;
+    info.is_read = false;
+    resources.push_back(info);
+    color_attachments.push_back(resources.size() - 1);
+    return *this;
+}
+
+RenderPass& RenderPass::read_color_attachment(RPResource info) {
+    info.usage = RGResourceUsage::ColorAttachment;
+    info.is_read = true;
+    resources.push_back(info);
+    color_attachments.push_back(resources.size() - 1);
+    return *this;
+}
+
+RenderPass& RenderPass::write_depth_attachment(RPResource info) {
+    info.usage = RGResourceUsage::DepthAttachment;
+    info.is_read = false;
+    resources.push_back(info);
+    depth_attachment = resources.size() - 1;
+    return *this;
+}
+
+RenderPass& RenderPass::set_rendering_extent(const RenderPassRenderingExtent& extent) {
+    this->extent = extent;
+    return *this;
+}
+
+RenderPass& RenderPass::set_pipeline(Pipeline* pipeline) {
+    this->pipeline = pipeline;
+    return *this;
+}
+
+RenderPass& RenderPass::set_make_sampler(bool make) {
+    make_sampler = make;
+    return *this;
+}
+
+const RPResource* RenderPass::get_resource(RgResourceHandle handle) const {
+    for(auto& r : resources) {
+        if(r.resource == handle) { return &r; }
+    }
+    return nullptr;
 }
 
 void RenderGraph::create_rendering_resources() {
     auto* renderer = get_context().renderer;
 
     for(auto& pass : passes) {
+        pass.pipeline->layout.descriptor_sets[0].bindings[0].
         std::vector<DescriptorInfo> descriptor_infos;
         for(const auto& rp_resource : pass.resources) {
             const auto& rg_resource = resources.at(rp_resource.resource);
 
-            if(rg_resource.resource.index() == 1) {
-                const auto& [texture, accesses] = std::get<1>(rg_resource.resource);
-                if(!texture) { continue; /*Swapchain image*/ }
+            std::visit(visitor{
+                    [&](const std::pair<Texture, RGTextureAccesses>& resource) {
+                        const auto& [texture, accesses] = resource;
+                        if(!texture) { return; /*Swapchain image*/ }
 
-                auto view = renderer->device.createImageView(vk::ImageViewCreateInfo{
-                    {},
-                    texture.image,
-                    vk_img_type_to_vk_img_view_type(texture->type),
-                    rp_resource.texture_info.mutable_format == RGImageFormat::DeduceFromVkImage ? texture->format : to_vk_format(rp_resource.texture_info.mutable_format),
-                    {},
-                    to_vk_subresource_range(rp_resource.texture_info.range, rp_resource.usage == RGResourceUsage::DepthAttachment ? RGImageAspect::Depth : RGImageAspect::Color)
-                });
+                        auto view = renderer->device.createImageView(vk::ImageViewCreateInfo{
+                            {},
+                            texture.image,
+                            vk_img_type_to_vk_img_view_type(texture->type),
+                            rp_resource.texture_info.mutable_format == RGImageFormat::DeduceFromVkImage ? texture->format : to_vk_format(rp_resource.texture_info.mutable_format),
+                            {},
+                            to_vk_subresource_range(rp_resource.texture_info.range, rp_resource.usage == RGResourceUsage::DepthAttachment ? RGImageAspect::Depth : RGImageAspect::Color)
+                        });
 
-                set_debug_name(renderer->device, view, std::format("{}_rgview", rg_resource.name));
+                        set_debug_name(renderer->device, view, std::format("{}_rgview", rg_resource.name));
 
-                image_views.emplace(std::make_pair(&pass, rp_resource.resource), view);
+                        image_views.emplace(std::make_pair(&pass, rp_resource.resource), view);
 
-                if(rp_resource.usage != RGResourceUsage::Image) { continue; }
+                        if(rp_resource.usage != RGResourceUsage::Image) { return; }
 
-                if(pass.pipeline) {
-                    auto binding = pass.pipeline->layout.find_binding(rg_resource.name);
-                    if(!binding) { continue; }
-                    descriptor_infos.push_back(DescriptorInfo{
-                        to_vk_desc_type(binding->type),
-                        view,
-                        to_vk_layout(rp_resource.texture_info.required_layout)
-                    });
-                }
-
-            } else {
-                assert("Implement this!" && false);
-            }
-        }
-
-        if(pass.pipeline) {
-            if(pass.make_sampler) {
-                auto sampler = renderer->device.createSampler(vk::SamplerCreateInfo{
-                    {},
-                    vk::Filter::eLinear,
-                    vk::Filter::eLinear,
-                    vk::SamplerMipmapMode::eLinear,
-                    {}, {}, {},
-                    0.0f, false, 0.0f, false,
-                    {},
-                    0.0f, 9.0f
-                });
-                descriptor_infos.push_back(DescriptorInfo{vk::DescriptorType::eSampler, sampler});
-            }
-            
-            // pass.set = new DescriptorSet{renderer->device, renderer->global_desc_pool, pass.pipeline->layout.descriptor_sets.at(1).layout};
-            // pass.set->update_bindings(renderer->device, 0, 0, descriptor_infos);
+                        if(pass.pipeline) {
+                            auto binding = pass.pipeline->layout.find_binding(rg_resource.name);
+                            if(!binding) { return; }
+                            descriptor_infos.push_back(DescriptorInfo{
+                                to_vk_desc_type(binding->type),
+                                view,
+                                to_vk_layout(rp_resource.texture_info.required_layout)
+                            });
+                        }
+                    },
+                    [](const auto&) { std::terminate(); }
+                },
+                rg_resource.resource
+            );
         }
     }
 }
@@ -362,9 +464,7 @@ void RenderGraph::bake_graph() {
     const auto t2 = std::chrono::steady_clock::now();
     const auto dt = std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count();
     spdlog::info("Baked graph in: {}ns", dt);
-    #endif
 
-    #if 0
     for(auto stage=0u,offset=0u; auto c : stage_pass_counts) {
         spdlog::debug("stage: {}", stage);
 
@@ -536,6 +636,115 @@ void RenderGraph::render(vk::CommandBuffer cmd, vk::Image swapchain_image, vk::I
 
         ++stage;
         offset += pass_count;
+    }
+}
+
+static constexpr vk::PipelineStageFlags2 to_vk_pipeline_stage(RGSyncStage stage) {
+    switch (stage) {
+        case RGSyncStage::None:          { return vk::PipelineStageFlagBits2::eNone; }
+        case RGSyncStage::Transfer:      { return vk::PipelineStageFlagBits2::eTransfer; }
+        case RGSyncStage::Fragment:      { return vk::PipelineStageFlagBits2::eFragmentShader; }
+        case RGSyncStage::EarlyFragment: { return vk::PipelineStageFlagBits2::eEarlyFragmentTests; }
+        case RGSyncStage::LateFragment:  { return vk::PipelineStageFlagBits2::eLateFragmentTests; }
+        case RGSyncStage::Compute:       { return vk::PipelineStageFlagBits2::eComputeShader; }
+        case RGSyncStage::ColorAttachmentOutput: { return vk::PipelineStageFlagBits2::eColorAttachmentOutput; }
+        case RGSyncStage::AllGraphics: { return vk::PipelineStageFlagBits2::eAllGraphics; }
+        default: {
+            spdlog::error("Unrecognized RGSyncStage {}", (u32)stage);
+            std::abort();
+        }
+    }
+}
+
+static constexpr vk::ImageAspectFlags to_vk_aspect(RGImageAspect aspect) {
+    switch (aspect) {
+        case RGImageAspect::Color: { return vk::ImageAspectFlagBits::eColor; }
+        case RGImageAspect::Depth: { return vk::ImageAspectFlagBits::eDepth; }
+        default: {
+            spdlog::error("Unrecognized RgImageAspect: {}", (u32)aspect);
+            std::abort();
+        }
+    }
+}
+
+static constexpr vk::ImageSubresourceRange to_vk_subresource_range(TextureRange range, RGImageAspect aspect) {
+    return vk::ImageSubresourceRange{
+        to_vk_aspect(aspect),
+        range.base_mip, range.mips,
+        range.base_layer, range.layers
+    };
+}
+
+static constexpr vk::ImageLayout to_vk_layout(RGImageLayout layout) {
+    switch(layout) {
+        case RGImageLayout::Attachment: { return vk::ImageLayout::eAttachmentOptimal; }
+        case RGImageLayout::General: { return vk::ImageLayout::eGeneral; }
+        case RGImageLayout::ReadOnly: { return vk::ImageLayout::eShaderReadOnlyOptimal; }
+        case RGImageLayout::TransferSrc: { return vk::ImageLayout::eTransferSrcOptimal; }
+        case RGImageLayout::TransferDst: { return vk::ImageLayout::eTransferDstOptimal; }
+        case RGImageLayout::PresentSrc: { return vk::ImageLayout::ePresentSrcKHR; }
+        case RGImageLayout::Undefined: { return vk::ImageLayout::eUndefined; }
+        default: {
+            spdlog::error("Unrecognized RGImageLayout: {}", (u32)layout);
+            std::abort();
+        }
+    }
+}
+
+static constexpr vk::AttachmentLoadOp to_vk_load_op(RGAttachmentLoadStoreOp op) {
+    switch(op) {
+        case RGAttachmentLoadStoreOp::DontCare: { return vk::AttachmentLoadOp::eDontCare; }
+        case RGAttachmentLoadStoreOp::Clear: { return vk::AttachmentLoadOp::eClear; }
+        case RGAttachmentLoadStoreOp::Load: { return vk::AttachmentLoadOp::eLoad; }
+        default: {
+            spdlog::error("Unrecognized RGAttachmentLoadOp {}", (u32)op);
+            std::abort();
+        }
+    }
+}
+
+static constexpr vk::AttachmentStoreOp to_vk_store_op(RGAttachmentLoadStoreOp op) {
+    switch(op) {
+        case RGAttachmentLoadStoreOp::DontCare: { return vk::AttachmentStoreOp::eDontCare; }
+        case RGAttachmentLoadStoreOp::Store: { return vk::AttachmentStoreOp::eStore; }
+        case RGAttachmentLoadStoreOp::None: { return vk::AttachmentStoreOp::eNone; }
+        default: {
+            spdlog::error("Unrecognized RGAttachmentStoreOp {}", (u32)op);
+            std::abort();
+        }
+    }
+}
+
+static constexpr vk::PipelineBindPoint to_vk_bind_point(PipelineType type) { 
+    switch (type) {
+        case PipelineType::Compute: { return vk::PipelineBindPoint::eCompute; }
+        case PipelineType::Graphics: { return vk::PipelineBindPoint::eGraphics; }
+        default: {
+            spdlog::error("Unrecognized PipelineType {}", (u32)type);
+            std::abort();
+        } 
+    }
+}
+
+static constexpr vk::ImageViewType vk_img_type_to_vk_img_view_type(vk::ImageType type) {
+    switch(type) {
+        case vk::ImageType::e2D: { return vk::ImageViewType::e2D; }
+        case vk::ImageType::e3D: { return vk::ImageViewType::e3D; }
+        default: {
+            spdlog::error("Unsupported vk::ImageType {}", (u32)type);
+            std::abort();
+        }
+    }
+}
+
+static constexpr vk::Format to_vk_format(RGImageFormat format) {
+    switch(format) {
+        case RGImageFormat::R32UI: { return vk::Format::eR32Uint; }
+        case RGImageFormat::RGBA8Unorm: { return vk::Format::eR8G8B8A8Unorm; }
+        default: {
+            spdlog::error("Unrecognized RGImageFormat {}", (u32)format);
+            std::abort();
+        }
     }
 }
 

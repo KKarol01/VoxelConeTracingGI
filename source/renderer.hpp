@@ -205,7 +205,7 @@ public:
     bool recompile_pipelines = false;
 
     DescriptorBuffer* descriptor_buffer;
-    // RenderGraph* render_graph;
+    RenderGraph* render_graph;
     RendererAllocator* allocator;
     GpuScene render_scene;
 

@@ -2,9 +2,6 @@
 #include "renderer.hpp"
 #include <vulkan/vulkan.hpp>
 
-template<class... Ts> struct visitor : Ts...  { using Ts::operator()...; };
-template<class... Ts> visitor(Ts...) -> visitor<Ts...>;
-
 DescriptorBufferSizes::DescriptorBufferSizes(vk::PhysicalDevice pdev) {
     vk::PhysicalDeviceProperties2 pdev_props;
     pdev_props.pNext = &pdev_descbuff_props;
@@ -67,7 +64,7 @@ static vk::DescriptorSetLayout create_set_layout(vk::Device device, const Descri
     return vklayout;
 } 
 
-DescriptorBuffer::DescriptorBuffer(vk::PhysicalDevice pdev, vk::Device device): pdev(pdev), device(device), sizes(pdev) { }
+DescriptorBuffer::DescriptorBuffer(vk::PhysicalDevice pdev, vk::Device device, u64 initial_size): pdev(pdev), device(device), sizes(pdev) { resize(initial_size); }
 
 Handle<DescriptorBufferAllocation> DescriptorBuffer::push_layout(const DescriptorBufferLayout& layout) {
     const auto handle = push_layout(create_set_layout(device, layout));
@@ -211,6 +208,7 @@ bool DescriptorBuffer::resize(u64 new_size) {
     u64 old_size = buffer ? buffer->size : 0ull;
     u64 size = old_size + old_size / 2;
     if(size < new_size) { size = new_size; }
+    if(new_size == 0ull) { return true; }
 
     Buffer new_buffer{
         "DescriptorBuffer_Storage", 

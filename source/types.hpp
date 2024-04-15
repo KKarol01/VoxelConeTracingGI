@@ -45,3 +45,6 @@ namespace std {
         size_t operator()(const Handle<T>& h) const { return h.handle; }
     };
 }
+
+template<class... Ts> struct visitor : Ts...  { using Ts::operator()...; };
+template<class... Ts> visitor(Ts...) -> visitor<Ts...>;

@@ -3,7 +3,7 @@ VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE
 #include "renderer.hpp"
 #include "input.hpp"
 #include "pipelines.hpp"
-// #include "render_graph.hpp"
+#include "render_graph.hpp"
 #include "descriptor.hpp"
 #include <spdlog/spdlog.h>
 #include <glm/gtc/matrix_transform.hpp>
@@ -426,55 +426,7 @@ void Renderer::render() {
         buffer_offsets
     );
 
-    vk::ImageMemoryBarrier2 to_color{
-        vk::PipelineStageFlagBits2::eTopOfPipe,
-        vk::AccessFlagBits2::eNone,
-        vk::PipelineStageFlagBits2::eColorAttachmentOutput,
-        vk::AccessFlagBits2::eColorAttachmentWrite,
-        vk::ImageLayout::eUndefined,
-        vk::ImageLayout::eColorAttachmentOptimal,
-        {}, {}, swapchain_images.at(img), {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1}
-    };
-    vk::ImageMemoryBarrier2 to_depth{
-        vk::PipelineStageFlagBits2::eTopOfPipe,
-        vk::AccessFlagBits2::eNone,
-        vk::PipelineStageFlagBits2::eAllCommands,
-        vk::AccessFlagBits2::eDepthStencilAttachmentRead | vk::AccessFlagBits2::eDepthStencilAttachmentWrite,
-        vk::ImageLayout::eUndefined,
-        vk::ImageLayout::eDepthAttachmentOptimal,
-        {}, {}, depth_texture->image, {vk::ImageAspectFlagBits::eDepth, 0, 1, 0, 1}
-    };
-    vk::ImageMemoryBarrier2 to_pres{
-        vk::PipelineStageFlagBits2::eColorAttachmentOutput,
-        vk::AccessFlagBits2::eColorAttachmentWrite,
-        vk::PipelineStageFlagBits2::eBottomOfPipe,
-        vk::AccessFlagBits2::eNone,
-        vk::ImageLayout::eColorAttachmentOptimal,
-        vk::ImageLayout::ePresentSrcKHR,
-        {}, {}, swapchain_images.at(img), {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1}
-    };
-    cmd.pipelineBarrier2(vk::DependencyInfo{ {}, {}, {}, to_color });
-    cmd.pipelineBarrier2(vk::DependencyInfo{ {}, {}, {}, to_depth });
-
-    vk::RenderingAttachmentInfo colors[]{{swapchain_views.at(img), vk::ImageLayout::eAttachmentOptimal, {}, {}, {}, vk::AttachmentLoadOp::eClear, vk::AttachmentStoreOp::eStore, vk::ClearColorValue{0.0f, 0.0f, 0.0f, 0.0f}}};
-    vk::RenderingAttachmentInfo depth{depth_texture->default_view, vk::ImageLayout::eDepthAttachmentOptimal, {}, {}, {}, vk::AttachmentLoadOp::eClear, vk::AttachmentStoreOp::eStore, vk::ClearDepthStencilValue{1.0f, 0}};
-    cmd.beginRendering(vk::RenderingInfo{
-        {},
-        {{}, {1024, 768}},
-        1,
-        0,
-        colors,
-        &depth
-    });
-
-    cmd.setViewportWithCount(vk::Viewport{0.0f, 0.0f, 1024.0f, 768.0f, 0.0f, 1.0f});
-    cmd.setScissorWithCount(vk::Rect2D{{0,0}, {1024, 768}});
-
-    render_scene.render(cmd);
-    cmd.endRendering();
-
-    cmd.pipelineBarrier2(vk::DependencyInfo{ {}, {}, {}, to_pres });
-    // render_graph->render(cmd, swapchain_images.at(img), swapchain_views.at(img));
+    render_graph->render(cmd, swapchain_images.at(img), swapchain_views.at(img));
 
     // draw_ui(cmd, swapchain_views.at(img));
 
@@ -718,7 +670,7 @@ bool Renderer::initialize_imgui() {
 }
 
 bool Renderer::initialize_render_passes() {
-    // render_graph = new RenderGraph{};
+    render_graph = new RenderGraph{};
     
     std::vector<std::filesystem::path> shader_paths{
         "default_lit.vert",
@@ -882,12 +834,7 @@ bool Renderer::initialize_render_passes() {
         DescriptorType::UniformBuffer, std::make_tuple(global_buffer.storage, sizeof(global_buffer_size))
     });
 
-    #if 0
-    DescriptorInfo global_set_infos[] {
-        DescriptorInfo{vk::DescriptorType::eUniformBuffer, global_buffer->buffer, 0, vk::WholeSize},
-    };
-    global_set.update_bindings(device, 0, 0, global_set_infos);
-
+    #if 1
     const auto res_voxel_albedo = render_graph->add_resource(RGResource{"voxel_albedo", voxel_albedo});
     const auto res_voxel_normal = render_graph->add_resource(RGResource{"voxel_normal", voxel_normal});
     const auto res_voxel_radiance = render_graph->add_resource(RGResource{"voxel_radiance", voxel_radiance});

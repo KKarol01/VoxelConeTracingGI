@@ -58,7 +58,7 @@ struct DescriptorBufferDescriptor {
 class DescriptorBuffer {
 public: 
     DescriptorBuffer() = default;
-    DescriptorBuffer(vk::PhysicalDevice pdev, vk::Device device);
+    DescriptorBuffer(vk::PhysicalDevice pdev, vk::Device device, u64 initial_size = 0ull);
 
     Handle<DescriptorBufferAllocation> push_layout(const DescriptorBufferLayout& layout);
     std::vector<Handle<DescriptorBufferAllocation>> push_layouts(const std::vector<DescriptorBufferLayout>& layouts);
