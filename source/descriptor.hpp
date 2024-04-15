@@ -16,6 +16,7 @@ struct DescriptorBufferLayoutBinding {
 };
 
 struct DescriptorBufferLayout {
+    constexpr DescriptorBufferLayout() = default;
     DescriptorBufferLayout(std::string_view name, const std::vector<DescriptorBufferLayoutBinding> &bindings)
         : name(name), bindings(bindings) {}
 
@@ -65,6 +66,7 @@ public:
     bool allocate_descriptor(Handle<DescriptorBufferAllocation> layout, u32 binding, const DescriptorBufferDescriptor& descriptor);
     bool allocate_descriptor(Handle<DescriptorBufferAllocation> layout, u32 binding, u32 array_index, const DescriptorBufferDescriptor& descriptor);
     vk::DeviceAddress get_buffer_address() const;
+    u64 get_set_offset(Handle<DescriptorBufferAllocation> layout) const;
 
 private:
     Handle<DescriptorBufferAllocation> push_layout(vk::DescriptorSetLayout vklayout);

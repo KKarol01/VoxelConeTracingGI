@@ -195,7 +195,6 @@ public:
 
     Texture3D voxel_albedo, voxel_normal, voxel_radiance;
     Texture2D depth_texture;
-    vk::ImageView depth_texture_view;
     Buffer global_buffer;
 
     Pipeline pp_default_lit;

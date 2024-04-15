@@ -1,16 +1,13 @@
 #pragma once
 #include "types.hpp"
 #include "renderer_types.hpp"
+#include "descriptor.hpp"
 #include <vector>
 #include <string>
 #include <optional>
 #include <map>
 #include <functional>
 #include <variant>
-
-#if 0
-#define RG_DEBUG_PRINT
-#endif
 
 #if 1
 enum class RGResourceType {
@@ -155,17 +152,17 @@ struct RPResource {
 };
 
 struct RenderPassRenderingViewport {
-    float offset_x, offset_y, width, height, min_depth, max_depth;
+    f32 offset_x, offset_y, width, height, min_depth, max_depth;
 };
 
 struct RenderPassRenderingScissor {
-    uint32_t scissor_x{0}, scissor_y{0}, scissor_width{0}, scissor_height{0}; 
+    u32 scissor_x{0}, scissor_y{0}, scissor_width{0}, scissor_height{0}; 
 };
 
 struct RenderPassRenderingExtent {
     RenderPassRenderingViewport viewport;
     RenderPassRenderingScissor scissor;
-    uint32_t layers{1}, viewmask{0};
+    u32 layers{1}, viewmask{0};
 };
 
 struct RenderPass {
@@ -183,7 +180,7 @@ struct RenderPass {
 
     std::string name;
     Pipeline* pipeline{};
-    DescriptorSet* set;
+    Handle<DescriptorBufferAllocation> descriptor;
     std::function<void(vk::CommandBuffer)> func;
     RenderPassRenderingExtent extent;
     std::vector<RPResource> resources;
@@ -194,13 +191,16 @@ struct RenderPass {
 
 class RenderGraph {
 public:
+    RenderGraph() = default;
+    explicit RenderGraph(DescriptorBuffer* descriptor_buffer): descriptor_buffer(descriptor_buffer) {}
+
     RgResourceHandle add_resource(RGResource resource) {
         resources.push_back(std::move(resource));
         return resources.size() - 1;
     }
 
     RenderGraph& add_render_pass(const RenderPass& pass) {
-        passes.push_back(std::move(pass));
+        renderpasses.push_back(std::move(pass));
         return *this;
     }
 
@@ -208,15 +208,7 @@ public:
         return resources.at(resource);
     }
 
-    void clear_resources() { 
-        resources.clear(); 
-        passes.clear();
-        stage_deps.clear();
-        stage_pass_counts.clear();
-        //todo: add them to deletion queue
-        image_views.clear();
-    }
-
+    void clear_resources();
     void bake_graph();
     void render(vk::CommandBuffer cmd, vk::Image swapchain_image, vk::ImageView swapchain_view);
     
@@ -229,15 +221,20 @@ private:
         vk::PipelineStageFlags2 src_stage, dst_stage;
         vk::AccessFlags2 src_access, dst_access;
     };
+    struct PassBarriers {
+        PassDependencies deps;
+        std::vector<RenderPass*> passes;
+    };
 
     void handle_image_pass_resource();
     void create_rendering_resources();
     BarrierStages deduce_stages_and_accesses(const RenderPass* src_pass, const RenderPass* dst_pass, const RPResource& src_resource, const RPResource& dst_resource, bool src_read, bool dst_read) const;
 
+    DescriptorBuffer* descriptor_buffer;
     std::vector<RGResource> resources;
-    std::vector<RenderPass> passes;
+    std::vector<RenderPass> renderpasses;
     std::vector<PassDependencies> stage_deps;
-    std::vector<u32> stage_pass_counts;
+    std::vector<u32> stage_deps_counts;
     std::map<std::pair<const RenderPass*, RgResourceHandle>, vk::ImageView> image_views;
 };
 #endif

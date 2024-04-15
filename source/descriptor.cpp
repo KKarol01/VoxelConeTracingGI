@@ -67,6 +67,8 @@ static vk::DescriptorSetLayout create_set_layout(vk::Device device, const Descri
 DescriptorBuffer::DescriptorBuffer(vk::PhysicalDevice pdev, vk::Device device, u64 initial_size): pdev(pdev), device(device), sizes(pdev) { resize(initial_size); }
 
 Handle<DescriptorBufferAllocation> DescriptorBuffer::push_layout(const DescriptorBufferLayout& layout) {
+    if(layout.bindings.empty()) { return {}; }
+
     const auto handle = push_layout(create_set_layout(device, layout));
 
     if(!handle) { return {}; }
@@ -86,6 +88,7 @@ std::vector<Handle<DescriptorBufferAllocation>> DescriptorBuffer::push_layouts(c
 }
 
 bool DescriptorBuffer::allocate_descriptor(Handle<DescriptorBufferAllocation> layout, u32 binding, const DescriptorBufferDescriptor& descriptor) {
+    if(!layout) { return false; }
     if(!runtime_layout_metadatas.contains(layout)) {
         return allocate_descriptor(layout, binding, 0, descriptor);
     }
@@ -138,6 +141,10 @@ bool DescriptorBuffer::allocate_descriptor(Handle<DescriptorBufferAllocation> la
 
 vk::DeviceAddress DescriptorBuffer::get_buffer_address() const {
     return device.getBufferAddress(vk::BufferDeviceAddressInfo{buffer.buffer});
+}
+
+u64 DescriptorBuffer::get_set_offset(Handle<DescriptorBufferAllocation> layout) const {
+    return std::find(begin(set_layouts), end(set_layouts), layout)->where;
 }
 
 Handle<DescriptorBufferAllocation> DescriptorBuffer::push_layout(vk::DescriptorSetLayout vklayout) {

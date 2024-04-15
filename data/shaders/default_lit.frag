@@ -263,5 +263,5 @@ void main() {
     // outColor = vec4(pow(final, vec3(1.0/2.2)), 1.0);
     // final = specular.rgb * specular.a;
     // outColor = vec4(final, 1.0);
-    outColor = vec4(1.0);
+    outColor = vec4(albedo, 1.0);
 }

@@ -995,7 +995,6 @@ bool Renderer::initialize_render_passes() {
             }
         })
         .set_draw_func([&](vk::CommandBuffer cmd) {
-            // cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, pp_default_lit.layout.layout, 2, material_set.set, {});
             render_scene.render(cmd);
         });
     render_graph->add_render_pass(pass_default_lit);

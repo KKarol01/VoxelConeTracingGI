@@ -7,7 +7,7 @@
 #include <vulkan/vulkan_to_string.hpp>
 #include <chrono>
 
-#if 1
+// #define RG_DEBUG_PRINT
 
 static constexpr vk::PipelineStageFlags2 to_vk_pipeline_stage(RGSyncStage stage);
 static constexpr vk::ImageAspectFlags to_vk_aspect(RGImageAspect aspect);
@@ -18,6 +18,7 @@ static constexpr vk::AttachmentStoreOp to_vk_store_op(RGAttachmentLoadStoreOp op
 static constexpr vk::PipelineBindPoint to_vk_bind_point(PipelineType type);
 static constexpr vk::ImageViewType vk_img_type_to_vk_img_view_type(vk::ImageType type);
 static constexpr vk::Format to_vk_format(RGImageFormat format);
+static constexpr RGImageAspect deduce_img_aspect(RGResourceUsage usage);
 
 bool TextureRange::intersects(TextureRange r) const {
     return (
@@ -239,13 +240,22 @@ const RPResource* RenderPass::get_resource(RgResourceHandle handle) const {
 void RenderGraph::create_rendering_resources() {
     auto* renderer = get_context().renderer;
 
-    for(auto& pass : passes) {
-        pass.pipeline->layout.descriptor_sets[0].bindings[0].
-        std::vector<DescriptorInfo> descriptor_infos;
+    std::vector<DescriptorBufferLayout> descriptor_layouts;
+    std::vector<std::vector<std::pair<u32, DescriptorBufferDescriptor>>> descriptors;
+    descriptor_layouts.reserve(renderpasses.size());
+    descriptors.resize(renderpasses.size());
+
+    for(u32 i=0; i<renderpasses.size(); ++i) {
+        auto& pass = renderpasses.at(i);
+        auto& descriptor_layout = descriptor_layouts.emplace_back(std::format("{}_rg_desc_layout", pass.name), std::vector<DescriptorBufferLayoutBinding>{});
+        descriptor_layout.bindings.reserve(pass.resources.size());
+        descriptors.at(i).reserve(pass.resources.size());
+
         for(const auto& rp_resource : pass.resources) {
             const auto& rg_resource = resources.at(rp_resource.resource);
 
-            std::visit(visitor{
+            std::visit(
+                visitor{
                     [&](const std::pair<Texture, RGTextureAccesses>& resource) {
                         const auto& [texture, accesses] = resource;
                         if(!texture) { return; /*Swapchain image*/ }
@@ -256,9 +266,8 @@ void RenderGraph::create_rendering_resources() {
                             vk_img_type_to_vk_img_view_type(texture->type),
                             rp_resource.texture_info.mutable_format == RGImageFormat::DeduceFromVkImage ? texture->format : to_vk_format(rp_resource.texture_info.mutable_format),
                             {},
-                            to_vk_subresource_range(rp_resource.texture_info.range, rp_resource.usage == RGResourceUsage::DepthAttachment ? RGImageAspect::Depth : RGImageAspect::Color)
+                            to_vk_subresource_range(rp_resource.texture_info.range, deduce_img_aspect(rp_resource.usage))
                         });
-
                         set_debug_name(renderer->device, view, std::format("{}_rgview", rg_resource.name));
 
                         image_views.emplace(std::make_pair(&pass, rp_resource.resource), view);
@@ -266,12 +275,17 @@ void RenderGraph::create_rendering_resources() {
                         if(rp_resource.usage != RGResourceUsage::Image) { return; }
 
                         if(pass.pipeline) {
-                            auto binding = pass.pipeline->layout.find_binding(rg_resource.name);
+                            auto* binding = pass.pipeline->layout.find_binding(rg_resource.name);
                             if(!binding) { return; }
-                            descriptor_infos.push_back(DescriptorInfo{
-                                to_vk_desc_type(binding->type),
-                                view,
-                                to_vk_layout(rp_resource.texture_info.required_layout)
+
+                            descriptor_layout.bindings.push_back(DescriptorBufferLayoutBinding{
+                                binding->type,
+                                1,
+                                false
+                            });
+                            descriptors.at(i).emplace_back(binding->binding, DescriptorBufferDescriptor{
+                                binding->type,
+                                std::make_pair(view, to_vk_layout(rp_resource.texture_info.required_layout))
                             });
                         }
                     },
@@ -279,6 +293,14 @@ void RenderGraph::create_rendering_resources() {
                 },
                 rg_resource.resource
             );
+        }
+    }
+
+    const auto layout_handles = descriptor_buffer->push_layouts(descriptor_layouts);
+    for(u32 i=0; i<layout_handles.size(); ++i) {
+        renderpasses.at(i).descriptor = layout_handles.at(i);
+        for(const auto& e : descriptors.at(i)) {
+            descriptor_buffer->allocate_descriptor(layout_handles.at(i), e.first, e.second);
         }
     }
 }
@@ -355,28 +377,37 @@ RenderGraph::BarrierStages RenderGraph::deduce_stages_and_accesses(const RenderP
     };
 }
 
+void RenderGraph::clear_resources() {
+    resources.clear(); 
+    renderpasses.clear();
+    stage_deps.clear();
+    stage_deps_counts.clear();
+    for(auto& e : image_views) { 
+        get_context().renderer->deletion_queue.push_back([view = e.second] {
+            get_context().renderer->device.destroyImageView(view);
+        });
+    }
+    image_views.clear();
+}
+
 void RenderGraph::bake_graph() {
     using ResourceIndex = u32;
 
-    #ifdef RG_DEBUG_PRINT
+#ifdef RG_DEBUG_PRINT
     const auto t1 = std::chrono::steady_clock::now();
-    #endif
+#endif
 
-    std::vector<std::vector<ResourceIndex>> stages;
-    std::vector<PassDependencies> stage_dependencies;
-    std::unordered_map<RenderPass*, uint32_t> pass_stage;
+    std::vector<PassBarriers> rendering_stages;
+    std::unordered_map<RenderPass*, u32> renderpass_stage;
 
-    const auto get_stage = [&](u64 idx) -> auto& { 
-        stages.resize(std::max(stages.size(), idx+1));
-        return stages.at(idx);
+    const auto get_stage = [&rendering_stages](u64 idx) -> auto& { 
+        rendering_stages.resize(std::max(rendering_stages.size(), idx+1));
+        return rendering_stages.at(idx);
     };
-    const auto get_stage_dependencies = [&](u64 idx) -> auto& {
-        stage_dependencies.resize(std::max(stage_dependencies.size(), idx+1));
-        return stage_dependencies.at(idx);
-    };
-    const auto insert_barrier = [&](u32 stage, const RenderPass* src_pass, const RenderPass* dst_pass, const RPResource& src_resource, const RPResource& dst_resource, vk::ImageLayout old_layout, vk::ImageLayout new_layout, bool src_read, bool dst_read, TextureRange range) {
-        auto& deps = get_stage_dependencies(stage);
+
+    const auto insert_image_barrier = [&](u64 stage, const RenderPass* src_pass, const RenderPass* dst_pass, const RPResource& src_resource, const RPResource& dst_resource, vk::ImageLayout old_layout, vk::ImageLayout new_layout, bool src_read, bool dst_read, TextureRange range) {
         const auto stages = deduce_stages_and_accesses(src_pass, dst_pass, src_resource, dst_resource, src_read, dst_read);
+        auto& deps = get_stage(stage).deps;
         auto& graph_resource = resources.at(dst_resource.resource);
             
         vk::ImageMemoryBarrier2 barrier{
@@ -389,20 +420,18 @@ void RenderGraph::bake_graph() {
             vk::QueueFamilyIgnored,
             vk::QueueFamilyIgnored,
             std::get<1>(graph_resource.resource).first.image,
-            to_vk_subresource_range(range, dst_resource.usage == RGResourceUsage::DepthAttachment ? RGImageAspect::Depth : RGImageAspect::Color)
+            to_vk_subresource_range(range, deduce_img_aspect(dst_resource.usage))
         };
 
-        if(barrier.image) {
-            deps.image_barriers.push_back(barrier);
-        } else {
-            deps.swapchain_image_barrier = barrier;
-        }
+        if(barrier.image) { deps.image_barriers.push_back(barrier); }
+        else { deps.swapchain_image_barrier = barrier; }
     };
     
-    for(u32 pass_idx = 0; auto& pass : passes) {
-        u32 stage = 0u;
+    for(u32 i=0; i<renderpasses.size(); ++i) {
+        auto& renderpass = renderpasses.at(i);
+        u32 rpass_stage = 0u;
 
-        for(auto& pass_resource : pass.resources) {
+        for(auto& pass_resource : renderpass.resources) {
             auto& graph_resource = resources.at(pass_resource.resource); 
 
             switch (pass_resource.usage) {
@@ -411,19 +440,20 @@ void RenderGraph::bake_graph() {
                 case RGResourceUsage::Image: {
                     auto& prti = pass_resource.texture_info;
                     const auto is_read = pass_resource.is_read;
+                    const auto& [texture, accesses] = std::get<1>(graph_resource.resource);
+                    const auto query = accesses.query_layout_changes(prti.range, is_read);
 
-                    const auto query = std::get<1>(graph_resource.resource).second.query_layout_changes(prti.range, is_read);
                     for(const auto& [layout_access, overlap] : query.accesses) {
-                        const auto& texture_access = std::get<1>(graph_resource.resource).second.get_layout_texture_access(layout_access);
-                        const auto barrier_stage = pass_stage.at(texture_access.pass) + 1u;    
-                        stage = std::max(stage, barrier_stage);
+                        const auto& texture_access = accesses.get_layout_texture_access(layout_access);
+                        const auto barrier_stage = renderpass_stage.at(texture_access.pass) + 1u;    
+                        rpass_stage = std::max(rpass_stage, barrier_stage);
                         const auto& src_resource = *texture_access.pass->get_resource(pass_resource.resource);
-                        insert_barrier(barrier_stage, texture_access.pass, &pass, src_resource, pass_resource, to_vk_layout(texture_access.layout), to_vk_layout(pass_resource.texture_info.required_layout), layout_access.is_read, is_read, overlap);
+                        insert_image_barrier(barrier_stage, texture_access.pass, &renderpass, src_resource, pass_resource, to_vk_layout(texture_access.layout), to_vk_layout(pass_resource.texture_info.required_layout), layout_access.is_read, is_read, overlap);
                     }
                     for(const auto& r : query.previously_unaccessed.ranges) {
                         vk::ImageLayout old_layout{vk::ImageLayout::eUndefined};
-                        if(std::get<1>(graph_resource.resource).first) { old_layout = std::get<1>(graph_resource.resource).first->current_layout; }
-                        insert_barrier(0, nullptr, &pass, pass_resource, pass_resource, old_layout, to_vk_layout(pass_resource.texture_info.required_layout), false, is_read, r);
+                        if(texture) { old_layout = texture->current_layout; }
+                        insert_image_barrier(0u, nullptr, &renderpass, pass_resource, pass_resource, old_layout, to_vk_layout(pass_resource.texture_info.required_layout), false, is_read, r);
                     }
                 } break;
                 default: {
@@ -433,39 +463,49 @@ void RenderGraph::bake_graph() {
             }
         }
 
-        for(auto& pass_resource : pass.resources) {
-            auto& graph_resource = resources.at(pass_resource.resource);
-            if(pass_resource.is_read) {
-                std::get<1>(graph_resource.resource).second.insert_read(RGTextureAccess{&pass, pass_resource.texture_info.required_layout, pass_resource.texture_info.range});
-            } else {
-                std::get<1>(graph_resource.resource).second.insert_write(RGTextureAccess{&pass, pass_resource.texture_info.required_layout, pass_resource.texture_info.range});
-            }
-        }
+        renderpass_stage[&renderpass] = rpass_stage;
+        get_stage(rpass_stage).passes.push_back(&renderpass);
 
-        pass_stage[&pass] = stage;
-        get_stage(stage).push_back(pass_idx);
-        ++pass_idx;
+        for(auto& pass_resource : renderpass.resources) {
+            auto& graph_resource = resources.at(pass_resource.resource);
+            std::visit(
+                visitor{
+                    [&graph_resource](auto&&) { spdlog::error("Unsupported graph_resource type: {}", (u32)graph_resource.resource.index()); std::terminate(); },
+                    [&pass_resource, &renderpass](std::pair<Texture, RGTextureAccesses>& resource) {
+                        if(pass_resource.is_read) {
+                            resource.second.insert_read(RGTextureAccess{&renderpass, pass_resource.texture_info.required_layout, pass_resource.texture_info.range});
+                        } else {
+                            resource.second.insert_write(RGTextureAccess{&renderpass, pass_resource.texture_info.required_layout, pass_resource.texture_info.range});
+                        }
+                    },
+                },
+                graph_resource.resource
+            );
+        }
     }
 
     std::vector<RenderPass> flat_resources;
-    flat_resources.reserve(passes.size());
-    stage_deps = std::move(stage_dependencies);
-    stage_pass_counts.resize(stages.size());
-    for(u32 stage_idx = 0; auto &s : stages) {
-        for(auto &r : s) {
-            flat_resources.push_back(std::move(passes.at(r)));
+    flat_resources.reserve(renderpasses.size());
+    stage_deps = [&rendering_stages] {
+        std::vector<PassDependencies> deps;
+        for(auto& e : rendering_stages) { deps.push_back(e.deps); }
+        return deps;
+    }();
+    stage_deps_counts.resize(rendering_stages.size());
+    for(u32 i=0; i<rendering_stages.size(); ++i) {
+        for(auto &e : rendering_stages.at(i).passes) {
+            flat_resources.push_back(std::move(*e));
         }
-        stage_pass_counts.at(stage_idx) = s.size();
-        ++stage_idx;
+        stage_deps_counts.at(i) = rendering_stages.at(i).passes.size();
     }
-    passes = std::move(flat_resources);
+    renderpasses = std::move(flat_resources);
 
-    #ifdef RG_DEBUG_PRINT
+#ifdef RG_DEBUG_PRINT
     const auto t2 = std::chrono::steady_clock::now();
     const auto dt = std::chrono::duration_cast<std::chrono::nanoseconds>(t2 - t1).count();
     spdlog::info("Baked graph in: {}ns", dt);
 
-    for(auto stage=0u,offset=0u; auto c : stage_pass_counts) {
+    for(auto stage=0u,offset=0u; auto c : stage_deps_counts) {
         spdlog::debug("stage: {}", stage);
 
         auto& sd = stage_deps.at(stage);
@@ -488,24 +528,21 @@ void RenderGraph::bake_graph() {
         }
 
         for(auto i=offset; i<offset + c; ++i) {
-            auto& p = passes.at(i);
+            auto& p = renderpasses.at(i);
             spdlog::debug("pass: {}", p.name);
         }
 
         ++stage;
         offset += c;
     }
-    #endif
+#endif
 
     create_rendering_resources();
 }
 
 void RenderGraph::render(vk::CommandBuffer cmd, vk::Image swapchain_image, vk::ImageView swapchain_view) {
-    for(u32 offset = 0, stage = 0; auto pass_count : stage_pass_counts) {
-
+    for(u32 offset = 0, stage = 0; auto pass_count : stage_deps_counts) {
         auto& barriers = stage_deps.at(stage);
-        // spdlog::debug("Stage {}. Barriers: {}", stage, barriers.image_barriers.size() + (barriers.swapchain_image_barrier.has_value()));
-
         std::vector<vk::ImageMemoryBarrier2> image_barriers;
         image_barriers.reserve(barriers.image_barriers.size() + 1u);
         image_barriers.insert(image_barriers.end(), barriers.image_barriers.begin(), barriers.image_barriers.end());
@@ -520,6 +557,7 @@ void RenderGraph::render(vk::CommandBuffer cmd, vk::Image swapchain_image, vk::I
 
         for(u32 i=0; i<dependency_info.imageMemoryBarrierCount; ++i) {
             auto& barrier = dependency_info.pImageMemoryBarriers[i];
+
 #ifdef RG_DEBUG_PRINT
             spdlog::debug("({}) {}:{} -> {}:{} {} -> {} RNG: {} - {} {} - {}",
                 (u64)(VkImage)barrier.image,
@@ -537,7 +575,8 @@ void RenderGraph::render(vk::CommandBuffer cmd, vk::Image swapchain_image, vk::I
         }
 
         for(u32 i = offset; i < offset + pass_count; ++i) {
-            const auto& pass = passes.at(i);
+            const auto& pass = renderpasses.at(i);
+
 #ifdef RG_DEBUG_PRINT
             spdlog::debug("{}", pass.name);
 #endif
@@ -545,11 +584,21 @@ void RenderGraph::render(vk::CommandBuffer cmd, vk::Image swapchain_image, vk::I
             if(pass.pipeline) {
                 auto* renderer = get_context().renderer;
                 cmd.bindPipeline(to_vk_bind_point(pass.pipeline->type), pass.pipeline->pipeline);
-                // vk::DescriptorSet sets_to_bind[] {
-                //     renderer->global_set.set,
-                //     pass.set->set,
-                // };
-                // cmd.bindDescriptorSets(to_vk_bind_point(pass.pipeline->type), pass.pipeline->layout.layout, 0, sets_to_bind, {});
+                // cmd.bindDescriptorBuffersEXT() - assuming it's done before calling rendergraph's render()
+
+                if(pass.descriptor) {
+                    u32 indices[] {0};
+                    u64 offsets[] {
+                        descriptor_buffer->get_set_offset(pass.descriptor)
+                    };
+                    cmd.setDescriptorBufferOffsetsEXT(
+                        to_vk_bind_point(pass.pipeline->type),
+                        pass.pipeline->layout.layout,
+                        1,
+                        indices,
+                        offsets
+                    );
+                }
 
                 if(pass.pipeline->type == PipelineType::Graphics) {
                     std::vector<vk::RenderingAttachmentInfo> color_attachments;
@@ -748,4 +797,6 @@ static constexpr vk::Format to_vk_format(RGImageFormat format) {
     }
 }
 
-#endif
+static constexpr RGImageAspect deduce_img_aspect(RGResourceUsage usage) {
+    return usage == RGResourceUsage::DepthAttachment ? RGImageAspect::Depth : RGImageAspect::Color;
+}
