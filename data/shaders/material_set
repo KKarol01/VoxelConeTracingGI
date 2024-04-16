@@ -1,8 +1,10 @@
 struct Material {
-    vec4 ambient_color;
-    vec4 diffuse_color;
-    vec4 specular_color;
+    uint diffuse_idx;
+    uint normal_idx;
 };
-layout(std140, set=2, binding=0) readonly buffer MaterialsStorage {
+
+layout(std430, set=1, binding=0) readonly buffer MaterialsStorage {
     Material materials[];
 };
+layout(set=1, binding=1) uniform sampler material_sampler;
+layout(set=1, binding=2) uniform texture2D material_textures[];

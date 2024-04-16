@@ -39,15 +39,16 @@ static vk::DescriptorSetLayout create_set_layout(vk::Device device, const Descri
     std::vector<vk::DescriptorBindingFlags> binding_flags;
     bindings.reserve(layout.bindings.size());
     binding_flags.reserve(layout.bindings.size());
-    for(u32 i=0; auto& e : layout.bindings) {
+    for(u32 i=0; i<layout.bindings.size(); ++i) {
+        auto& binding = layout.bindings.at(i);
         bindings.push_back(vk::DescriptorSetLayoutBinding{
             i,
-            to_vk_desc_type(e.type),
-            e.count,
+            to_vk_desc_type(binding.type),
+            binding.count,
             all_stages
         });
 
-        if(e.is_runtime_sized) { binding_flags.push_back(vk::DescriptorBindingFlagBits::eVariableDescriptorCount | vk::DescriptorBindingFlagBits::ePartiallyBound); }
+        if(binding.is_runtime_sized) { binding_flags.push_back(vk::DescriptorBindingFlagBits::eVariableDescriptorCount | vk::DescriptorBindingFlagBits::ePartiallyBound); }
         else { binding_flags.push_back({}); }
     }
 
@@ -69,13 +70,15 @@ DescriptorBuffer::DescriptorBuffer(vk::PhysicalDevice pdev, vk::Device device, u
 Handle<DescriptorBufferAllocation> DescriptorBuffer::push_layout(const DescriptorBufferLayout& layout) {
     if(layout.bindings.empty()) { return {}; }
 
-    const auto handle = push_layout(create_set_layout(device, layout));
+    const auto handle = push_layout(create_set_layout(device, layout), layout);
 
     if(!handle) { return {}; }
 
     if(layout.bindings.back().is_runtime_sized) {
         runtime_layout_metadatas.emplace(handle, DescriptorBufferRuntimeLayoutMetadata{layout.bindings.back().count, 0u});
     }
+
+    spdlog::debug("DB: layout {}, handle {}", layout.name, handle.handle);
 
     return handle;
 }
@@ -94,7 +97,10 @@ bool DescriptorBuffer::allocate_descriptor(Handle<DescriptorBufferAllocation> la
     }
     auto& runtime = runtime_layout_metadatas.at(layout);
     if(runtime.count >= runtime.max) { return false; }
-    const auto idx = runtime.count++;
+    const auto idx = [&binding, &layout, &runtime, this] {
+        if(binding != std::max(get_allocation(layout).binding_count, 1u) - 1u) { return 0u; }
+        return runtime.count++;
+    }(); 
     return allocate_descriptor(layout, binding, idx, descriptor);
 }
 
@@ -103,6 +109,8 @@ bool DescriptorBuffer::allocate_descriptor(Handle<DescriptorBufferAllocation> la
     const auto binding_offset = device.getDescriptorSetLayoutBindingOffsetEXT(set.layout, binding);
     const auto desc_size = sizes.get_descriptor_size(descriptor.type);
     auto* memory_location = static_cast<std::byte*>(buffer->data) + set.where + binding_offset + desc_size * array_index;
+
+    spdlog::debug("DB: Allocating layout {} at binding {}, index {}, desc type {} at location {} and offset {}", layout.handle, binding, array_index, (u32)descriptor.type, set.where, binding_offset + desc_size * array_index);
 
     vk::DescriptorDataEXT desc_data{};
     vk::DescriptorImageInfo image_info;
@@ -120,8 +128,7 @@ bool DescriptorBuffer::allocate_descriptor(Handle<DescriptorBufferAllocation> la
             },
             [&descriptor, &desc_data, &buffer_info, this](const std::tuple<Handle<GpuBuffer>, u64>& buffer) { 
                 const auto& alloc_buffer = get_context().renderer->allocator->get_buffer(std::get<0>(buffer));
-                vk::BufferDeviceAddressInfo address_info{alloc_buffer.buffer};
-                const auto address = device.getBufferAddress(&address_info);
+                const auto address = device.getBufferAddress(vk::BufferDeviceAddressInfo{alloc_buffer.buffer});
                 buffer_info.setAddress(address).setRange(std::get<1>(buffer));
                 switch(descriptor.type) {
                     case DescriptorType::UniformBuffer: { desc_data.setPUniformBuffer(&buffer_info); } break;
@@ -144,10 +151,12 @@ vk::DeviceAddress DescriptorBuffer::get_buffer_address() const {
 }
 
 u64 DescriptorBuffer::get_set_offset(Handle<DescriptorBufferAllocation> layout) const {
-    return std::find(begin(set_layouts), end(set_layouts), layout)->where;
+    auto& alloc = get_allocation(layout);
+    auto i = alloc.where;
+    return i;
 }
 
-Handle<DescriptorBufferAllocation> DescriptorBuffer::push_layout(vk::DescriptorSetLayout vklayout) {
+Handle<DescriptorBufferAllocation> DescriptorBuffer::push_layout(vk::DescriptorSetLayout vklayout, const DescriptorBufferLayout& layout) {
     const auto size = align_up(device.getDescriptorSetLayoutSizeEXT(vklayout), sizes.get_offset_alignment());
     if(!buffer) { resize(size); }
     const auto capacity = buffer->size; 
@@ -166,7 +175,7 @@ Handle<DescriptorBufferAllocation> DescriptorBuffer::push_layout(vk::DescriptorS
         }
     }
 
-    const auto& alloc = set_layouts.emplace_back(free_spot->where, size, vklayout);
+    const auto& alloc = set_layouts.emplace_back(free_spot->where, size, layout.bindings.size(), vklayout);
     free_spot->where += size;
     free_spot->size -= size;
     if(free_spot->size == 0ull) { free_list.erase(free_list.begin() + free_spot_idx); }
@@ -180,6 +189,14 @@ std::pair<DescriptorBufferFreeListItem*, u64> DescriptorBuffer::find_free_item(u
         }
     }
     return {nullptr, -1ull};
+}
+
+DescriptorBufferAllocation& DescriptorBuffer::get_allocation(Handle<DescriptorBufferAllocation> handle) {
+    return *std::find(begin(set_layouts), end(set_layouts), handle);
+}
+
+const DescriptorBufferAllocation& DescriptorBuffer::get_allocation(Handle<DescriptorBufferAllocation> handle) const {
+    return *std::find(begin(set_layouts), end(set_layouts), handle);
 }
 
 u64 DescriptorBuffer::calculate_free_space() const {

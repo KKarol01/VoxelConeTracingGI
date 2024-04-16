@@ -591,13 +591,13 @@ void RenderGraph::render(vk::CommandBuffer cmd, vk::Image swapchain_image, vk::I
                     u64 offsets[] {
                         descriptor_buffer->get_set_offset(pass.descriptor)
                     };
-                    cmd.setDescriptorBufferOffsetsEXT(
-                        to_vk_bind_point(pass.pipeline->type),
-                        pass.pipeline->layout.layout,
-                        1,
-                        indices,
-                        offsets
-                    );
+                    // cmd.setDescriptorBufferOffsetsEXT(
+                    //     to_vk_bind_point(pass.pipeline->type),
+                    //     pass.pipeline->layout.layout,
+                    //     1,
+                    //     indices,
+                    //     offsets
+                    // );
                 }
 
                 if(pass.pipeline->type == PipelineType::Graphics) {

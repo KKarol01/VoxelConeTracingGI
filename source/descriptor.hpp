@@ -38,10 +38,11 @@ struct DescriptorBufferRuntimeLayoutMetadata {
 
 struct DescriptorBufferAllocation : public Handle<DescriptorBufferAllocation> {
     constexpr DescriptorBufferAllocation() = default;
-    constexpr DescriptorBufferAllocation(u64 where, u64 size, vk::DescriptorSetLayout layout)
-        : Handle(HandleGenerate), where(where), size(size), layout(layout) { }
+    constexpr DescriptorBufferAllocation(u64 where, u64 size, u32 binding_count, vk::DescriptorSetLayout layout)
+        : Handle(HandleGenerate), where(where), size(size), binding_count(binding_count), layout(layout) { }
     
     u64 where, size;
+    u32 binding_count;
     vk::DescriptorSetLayout layout;
 };
 
@@ -67,9 +68,11 @@ public:
     bool allocate_descriptor(Handle<DescriptorBufferAllocation> layout, u32 binding, u32 array_index, const DescriptorBufferDescriptor& descriptor);
     vk::DeviceAddress get_buffer_address() const;
     u64 get_set_offset(Handle<DescriptorBufferAllocation> layout) const;
+    DescriptorBufferAllocation& get_allocation(Handle<DescriptorBufferAllocation> handle);
+    const DescriptorBufferAllocation& get_allocation(Handle<DescriptorBufferAllocation> handle) const;
 
 private:
-    Handle<DescriptorBufferAllocation> push_layout(vk::DescriptorSetLayout vklayout);
+    Handle<DescriptorBufferAllocation> push_layout(vk::DescriptorSetLayout vklayout, const DescriptorBufferLayout& layout);
     std::pair<DescriptorBufferFreeListItem*, u64> find_free_item(u64 size);
     u64 calculate_free_space() const;
     void defragment();

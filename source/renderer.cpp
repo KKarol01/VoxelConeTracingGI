@@ -77,16 +77,49 @@ void RendererAllocator::complete_jobs(vk::CommandBuffer cmd) {
     auto staging_buffer = Buffer{"allocator_staging_buffer", vk::BufferUsageFlagBits::eTransferSrc, true, std::span{upload_data}};
 
     u64 offset = 0ull;
-    for(auto& e : jobs) {
-        if(e.storage.index() == 1) {
-            const auto copy_region = vk::BufferCopy2{offset, 0, e.data.size()};
-            cmd.copyBuffer2(vk::CopyBufferInfo2{
-                staging_buffer->buffer,
-                get_buffer(std::get<1>(e.storage)).buffer,
-                copy_region
-            });
-        }
-        offset += e.data.size();
+    for(auto& job : jobs) {
+        std::visit(
+            visitor{
+                [&job](auto&&) { spdlog::error("Unsupported job type: {}", job.storage.index()); },
+                [&cmd, &staging_buffer, &offset, &job, this] (Handle<TextureStorage>& handle) {
+                    auto& texture = get_texture(handle);
+                    vk::ImageMemoryBarrier2 barrier{
+                        vk::PipelineStageFlagBits2::eTopOfPipe, vk::AccessFlagBits2::eNone,
+                        vk::PipelineStageFlagBits2::eTransfer, vk::AccessFlagBits2::eTransferWrite,
+                        vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal,
+                        {}, {}, texture.image, {deduce_vk_image_aspect(texture.format), 0, 1, 0, 1}
+                    };
+                    cmd.pipelineBarrier2(vk::DependencyInfo{{}, {}, {}, barrier});
+                    const auto copy_region = vk::BufferImageCopy2{offset, texture.width, texture.height, 
+                        vk::ImageSubresourceLayers{deduce_vk_image_aspect(texture.format), 0, 0, 1},
+                        vk::Offset3D{0, 0, 0},
+                        vk::Extent3D{texture.width, texture.height, texture.depth}
+                    };
+                    cmd.copyBufferToImage2(vk::CopyBufferToImageInfo2{
+                        staging_buffer.buffer, texture.image, vk::ImageLayout::eTransferDstOptimal, copy_region
+                    });
+
+                    barrier = {
+                        vk::PipelineStageFlagBits2::eTransfer, vk::AccessFlagBits2::eTransferWrite,
+                        vk::PipelineStageFlagBits2::eFragmentShader, vk::AccessFlagBits2::eShaderRead,
+                        vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eShaderReadOnlyOptimal,
+                        {}, {}, texture.image, {deduce_vk_image_aspect(texture.format), 0, 1, 0, 1}
+                    };
+                    cmd.pipelineBarrier2(vk::DependencyInfo{{}, {}, {}, barrier});
+                    texture.current_layout = vk::ImageLayout::eShaderReadOnlyOptimal;
+                },
+                [&cmd, &staging_buffer, &offset, &job, this] (Handle<GpuBuffer>& handle) {
+                    const auto copy_region = vk::BufferCopy2{offset, 0, job.data.size()};
+                    cmd.copyBuffer2(vk::CopyBufferInfo2{
+                        staging_buffer.buffer,
+                        get_buffer(handle).buffer,
+                        copy_region
+                    });
+                },
+            },
+            job.storage
+        );
+        offset += job.data.size();
     }
 
     get_context().renderer->deletion_queue.push_back([this, vma = this->vma, buffer = staging_buffer.storage.handle] {
@@ -262,7 +295,7 @@ void Renderer::setup_scene() {
     auto& scene = *context.scene;
 
     std::unordered_map<const TextureStorage*, u64> texture_indices;
-    std::vector<const TextureStorage*> material_textures{nullptr}; // index 0 reserved for lack of texture
+    std::vector<const TextureStorage*> material_textures{}; // index 0 reserved for lack of texture
     material_textures.reserve(scene.material_textures.size());
     std::vector<GpuInstancedMesh> instanced_meshes;
 
@@ -358,7 +391,7 @@ void Renderer::setup_scene() {
             const auto instanced_mesh_idx = instanced_models_offsets.at(e.model) + parsed_gpu_model_instances[e.model] + idx;
             auto& instanced_mesh = instanced_meshes.at(instanced_mesh_idx); 
             instanced_mesh.diffuse_texture_idx = add_or_get_material_texture(f.material.diffuse_texture);
-            instanced_mesh.normal_texture_idx = add_or_get_material_texture(f.material.normal_texture);
+            // instanced_mesh.normal_texture_idx = add_or_get_material_texture(f.material.normal_texture);
             ++idx;
         }
         ++parsed_gpu_model_instances[e.model];
@@ -376,11 +409,40 @@ void Renderer::setup_scene() {
         });
     }
 
+    for(auto& e : indirect_commands) {
+        spdlog::debug("Indirect command: {} {}", e.firstInstance, e.instanceCount);
+    }
+    for(auto& e : instanced_meshes) {
+        spdlog::debug("diff idx {}, norm idx {}", e.diffuse_texture_idx, e.normal_texture_idx);
+    }
+
     render_scene.vertex_buffer = Buffer{"scene_vertex_buffer", vk::BufferUsageFlagBits::eVertexBuffer, false, std::as_bytes(std::span{vertices})};
     render_scene.index_buffer = Buffer{"scene_index_buffer", vk::BufferUsageFlagBits::eIndexBuffer, false, std::as_bytes(std::span{indices})};
-    render_scene.instance_buffer = Buffer{"scene_instance_buffer", vk::BufferUsageFlagBits::eStorageBuffer, true, std::as_bytes(std::span{instanced_meshes})};
+    render_scene.instance_buffer = Buffer{"scene_instance_buffer", vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eShaderDeviceAddress, true, std::as_bytes(std::span{instanced_meshes})};
     render_scene.indirect_commands_buffer = Buffer{"scene_indirect_buffer", vk::BufferUsageFlagBits::eIndirectBuffer, true, std::as_bytes(std::span{indirect_commands})};
     render_scene.draw_count = indirect_commands.size();
+
+    auto sampler = device.createSampler(vk::SamplerCreateInfo{
+        {}, vk::Filter::eLinear, vk::Filter::eLinear, vk::SamplerMipmapMode::eLinear, vk::SamplerAddressMode::eRepeat, vk::SamplerAddressMode::eRepeat, vk::SamplerAddressMode::eRepeat,
+        {}, false, {}, false, {}, 0, 11.0f
+    });
+    material_descriptor_buffer->allocate_descriptor(material_set, 0, DescriptorBufferDescriptor{
+        DescriptorType::StorageBuffer, std::make_pair(render_scene.instance_buffer.storage, render_scene.instance_buffer->size)
+    });
+    material_descriptor_buffer->allocate_descriptor(material_set, 1, DescriptorBufferDescriptor{
+        DescriptorType::Sampler, sampler
+    });
+    // material_descriptor_buffer->allocate_descriptor(material_set, 2, DescriptorBufferDescriptor{
+    //     DescriptorType::SampledImage, std::make_pair(material_textures.back()->default_view, vk::ImageLayout::eShaderReadOnlyOptimal)
+    // });
+    for(auto& e : material_textures) {
+        if(!e) { continue; }
+
+        material_descriptor_buffer->allocate_descriptor(material_set, 2, DescriptorBufferDescriptor{
+            DescriptorType::SampledImage, std::make_pair(e->default_view, vk::ImageLayout::eShaderReadOnlyOptimal)
+        });
+    }
+
 }
 
 void Renderer::render() { 
@@ -403,20 +465,34 @@ void Renderer::render() {
         cmd.end();
         graphics_queue.submit(vk::SubmitInfo{{}, {}, cmd});
         graphics_queue.waitIdle();
+
+        [this] {
+            static bool once = true;
+            if(once) setup_scene();
+            once = false;
+        }();
         cmd.begin({vk::CommandBufferUsageFlagBits::eOneTimeSubmit});
     }
 
     cmd.bindVertexBuffers(0, render_scene.vertex_buffer->buffer, 0ull);
     cmd.bindIndexBuffer(render_scene.index_buffer->buffer, 0, vk::IndexType::eUint32);
-    cmd.bindDescriptorBuffersEXT(vk::DescriptorBufferBindingInfoEXT{
-        descriptor_buffer->get_buffer_address(),
-        vk::BufferUsageFlagBits::eResourceDescriptorBufferEXT | vk::BufferUsageFlagBits::eSamplerDescriptorBufferEXT | vk::BufferUsageFlagBits::eShaderDeviceAddress
-    });
+
+    vk::DescriptorBufferBindingInfoEXT buffer_bindings[] {
+        vk::DescriptorBufferBindingInfoEXT {
+            descriptor_buffer->get_buffer_address(),
+            vk::BufferUsageFlagBits::eResourceDescriptorBufferEXT | vk::BufferUsageFlagBits::eSamplerDescriptorBufferEXT | vk::BufferUsageFlagBits::eShaderDeviceAddress
+        }, 
+        vk::DescriptorBufferBindingInfoEXT {
+            material_descriptor_buffer->get_buffer_address(),
+            vk::BufferUsageFlagBits::eResourceDescriptorBufferEXT | vk::BufferUsageFlagBits::eSamplerDescriptorBufferEXT | vk::BufferUsageFlagBits::eShaderDeviceAddress
+        }, 
+    };
+    cmd.bindDescriptorBuffersEXT(buffer_bindings);
 
     cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, pp_default_lit.pipeline);
 
-    u32 buffers[] {0};
-    u64 buffer_offsets[] {0};
+    u32 buffers[] {0, 1};
+    u64 buffer_offsets[] {0, material_descriptor_buffer->get_set_offset(material_set)};
 
     cmd.setDescriptorBufferOffsetsEXT(
         vk::PipelineBindPoint::eGraphics,
@@ -442,7 +518,7 @@ void Renderer::render() {
 
     device.waitIdle();
 
-    for(auto& e : deletion_queue) { e(); }
+    // for(auto& e : deletion_queue) { e(); }
 }
 
 bool Renderer::initialize_vulkan() {
@@ -613,17 +689,23 @@ bool Renderer::initialize_frame_resources() {
         set_debug_name(device, frames.at(i).in_flight_fence, std::format("frame_in_flight_fence_{}", i));
     }
 
-    descriptor_buffer = new DescriptorBuffer{physical_device, device};
-    const auto layouts = descriptor_buffer->push_layouts({
+    descriptor_buffer = new DescriptorBuffer{physical_device, device, 1024};
+    material_descriptor_buffer = new DescriptorBuffer{physical_device, device, 1024};
+    auto layouts = descriptor_buffer->push_layouts({
         {"global_set_layout", {
             {DescriptorType::UniformBuffer, 1}
         }},
-        // {"material_set_layout", {
-        //     {DescriptorType::StorageBuffer, 1},
-        //     {DescriptorType::SampledImage, 512, true},
-        // }},
+        
     });
     global_set = layouts.at(0);
+    layouts = material_descriptor_buffer->push_layouts({
+        {"material_set_layout", {
+            {DescriptorType::StorageBuffer, 1},
+            {DescriptorType::Sampler, 1},
+            {DescriptorType::SampledImage, 512, true}
+        }}
+    });
+    material_set = layouts.at(0);
 
     return true;
 }
@@ -772,12 +854,17 @@ bool Renderer::initialize_render_passes() {
                 vk::VertexInputAttributeDescription{0, 0, vk::Format::eR32G32B32Sfloat, 0},
                 vk::VertexInputAttributeDescription{1, 0, vk::Format::eR32G32B32Sfloat, 12},
                 vk::VertexInputAttributeDescription{2, 0, vk::Format::eR32G32B32Sfloat, 24},
+                vk::VertexInputAttributeDescription{3, 0, vk::Format::eR32G32Sfloat, 36},
             })
         .with_depth_testing(true, true, vk::CompareOp::eLess)
         .with_culling(vk::CullModeFlagBits::eBack, vk::FrontFace::eCounterClockwise)
         .with_shaders({
             {vk::ShaderStageFlagBits::eVertex, &shaders.at(0)},
             {vk::ShaderStageFlagBits::eFragment, &shaders.at(1)},
+        })
+        .with_descriptor_set_layouts({
+            descriptor_buffer->get_allocation(global_set).layout,
+            material_descriptor_buffer->get_allocation(material_set).layout,
         })
         .with_color_attachments({swapchain_format})
         .with_depth_attachment(vk::Format::eD32Sfloat)

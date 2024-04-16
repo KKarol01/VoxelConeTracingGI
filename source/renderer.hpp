@@ -178,20 +178,13 @@ public:
     std::vector<vk::ImageView> swapchain_views;
     vk::Format swapchain_format;
     std::array<FrameResources, FRAMES_IN_FLIGHT> frames{};
-    std::vector<GpuBuffer*> buffers;
-    std::vector<TextureStorage*> texture_storages;
     struct {
         PFN_vkGetInstanceProcAddr get_instance_proc_addr;
         PFN_vkGetDeviceProcAddr get_device_proc_addr;
     } vulkan_function_pointers;
     
     Handle<DescriptorBufferAllocation> global_set;
-
-    vk::DescriptorSetLayout global_set_layout;
-    vk::DescriptorSetLayout default_lit_set_layout;
-    vk::DescriptorSetLayout voxelize_set_layout;
-    vk::DescriptorSetLayout merge_voxels_set_layout;
-    vk::DescriptorSetLayout material_set_layout;
+    Handle<DescriptorBufferAllocation> material_set;
 
     Texture3D voxel_albedo, voxel_normal, voxel_radiance;
     Texture2D depth_texture;
@@ -204,6 +197,7 @@ public:
     bool recompile_pipelines = false;
 
     DescriptorBuffer* descriptor_buffer;
+    DescriptorBuffer* material_descriptor_buffer;
     RenderGraph* render_graph;
     RendererAllocator* allocator;
     GpuScene render_scene;

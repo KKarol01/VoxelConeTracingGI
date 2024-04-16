@@ -242,6 +242,13 @@ Pipeline PipelineBuilder::build_compute(std::string_view label) {
 
 PipelineLayout PipelineBuilder::coalesce_shader_resources_into_layout() {
     PipelineLayout layout;
+
+    if(!this->layouts.empty()) {
+        return PipelineLayout{get_context().renderer->device.createPipelineLayout(vk::PipelineLayoutCreateInfo{
+            {}, layouts, {}
+        }), {}};
+    }
+    
     std::vector<std::vector<vk::DescriptorSetLayoutBinding>> layout_bindings(PipelineLayout::MAX_DESCRIPTOR_SET_COUNT);
     static constexpr vk::ShaderStageFlags ALL_STAGE_FLAGS = 
         vk::ShaderStageFlagBits::eFragment | 

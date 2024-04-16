@@ -1,5 +1,6 @@
-#version 460
+#version 460 core
 #pragma shader_stage(fragment)
+#extension GL_EXT_nonuniform_qualifier : require
 
 #define PI 3.14159265359
 #define EPSILON 1e-8
@@ -10,13 +11,14 @@ layout(location=0) in FS_IN {
     vec3 frag_pos;
     vec3 frag_normal;
     vec3 frag_color;
+    vec2 frag_uv;
     flat int frag_instance_index;
 };
 
 #include "global_set"
-layout(set=1, binding=0) uniform texture3D voxel_radiance;
-layout(set=1, binding=1) uniform sampler voxel_sampler;
-// #include "material_set"
+// layout(set=1, binding=0) uniform texture3D voxel_radiance;
+// layout(set=1, binding=1) uniform sampler voxel_sampler;
+#include "material_set"
 // Material mat = materials[frag_instance_index];
 
 // const vec3 DIFFUSE_CONE_DIRECTIONS_16[16] = {
@@ -249,6 +251,12 @@ void main() {
     // vec3 position = frag_pos;
     // vec3 normal = frag_normal;
     vec3 albedo = frag_color;
+    Material mat = materials[frag_instance_index];
+    if(mat.diffuse_idx >= 0) {
+        uint diff = min(max(mat.diffuse_idx, 0), 24);
+        albedo = vec3(float(diff) / 24.0);
+        albedo = texture(sampler2D(material_textures[nonuniformEXT(mat.diffuse_idx)], material_sampler), frag_uv).rgb;
+    }
     // vec3 normal = texture(sampler2D(tex_normal, sampler1), frag_uv).rgb;
     // normal = normal*2.0 - 1.0;
     // normal = normalize(frag_TBN * normal);

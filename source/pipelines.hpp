@@ -57,6 +57,11 @@ public:
         return *this;
     }
 
+    PipelineBuilder& with_descriptor_set_layouts(const std::vector<vk::DescriptorSetLayout>& layouts) {
+        this->layouts = layouts;
+        return *this;
+    }
+
     Pipeline build_graphics(std::string_view label);
 
     Pipeline build_compute(std::string_view label);
@@ -68,6 +73,7 @@ private:
     std::vector<std::pair<vk::ShaderStageFlagBits, Shader*>> shaders;
     std::vector<vk::VertexInputBindingDescription> bindings;
     std::vector<vk::VertexInputAttributeDescription> attributes;
+    std::vector<vk::DescriptorSetLayout> layouts;
     vk::CullModeFlagBits cull_mode{vk::CullModeFlagBits::eBack};
     vk::FrontFace front_face{vk::FrontFace::eCounterClockwise};
     bool depth_test{true};

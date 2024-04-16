@@ -22,7 +22,8 @@ static Texture2D get_asset_texture(const fastgltf::Asset* asset, u64 texture_ind
             auto raw_image = reinterpret_cast<std::byte*>(stbi_load_from_memory(vec.bytes.data(), vec.bytes.size(), &x, &y, &ch, 4));
             auto new_tex = &cache.insert({
                 name,
-                Texture2D{std::format("scene_texture_2d_{}", name), (u32)x, (u32)y, vk::Format::eR8G8B8A8Unorm, (u32)std::log2f(std::min(x, y)) + 1, vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eTransferSrc, std::span{raw_image, x*y*4u}}
+                // Texture2D{std::format("scene_texture_2d_{}", name), (u32)x, (u32)y, vk::Format::eR8G8B8A8Unorm, (u32)std::log2f(std::min(x, y)) + 1, vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eTransferSrc, std::span{raw_image, x*y*4u}}
+                Texture2D{std::format("scene_texture_2d_{}", name), (u32)x, (u32)y, vk::Format::eR8G8B8A8Unorm, 1u, vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eTransferSrc, std::span{raw_image, x*y*4u}}
             }).first->second;
             return new_tex;
         }
@@ -71,7 +72,7 @@ Handle<Model> Scene::load_model(const std::filesystem::path& path) {
                 continue;
             }
 
-            Mesh mesh;
+            Mesh& mesh = model.meshes.emplace_back();
             mesh.name = fgmesh.name;
 
             auto& positions = asset->accessors[primitive.findAttribute("POSITION")->second];
@@ -96,14 +97,22 @@ Handle<Model> Scene::load_model(const std::filesystem::path& path) {
                     mesh.vertices[initial_index + idx].color = glm::vec3{1.0};
                 });
             }
+            if(primitive.findAttribute("TEXCOORD_0") != primitive.attributes.end()) {
+                auto& uvs = asset->accessors[primitive.findAttribute("TEXCOORD_0")->second];
+                fastgltf::iterateAccessorWithIndex<glm::vec2>(asset.get(), uvs, [&](glm::vec2 vec, size_t idx) {
+                    mesh.vertices[initial_index + idx].uv = vec;
+                });
+            } else {
+                fastgltf::iterateAccessorWithIndex<glm::vec3>(asset.get(), positions, [&](glm::vec3 vec, size_t idx) {
+                    mesh.vertices[initial_index + idx].uv = glm::vec2{0.0f};
+                });
+            }
 
             initial_index = mesh.indices.size();
             mesh.indices.resize(mesh.indices.size() + indices.count);
             fastgltf::iterateAccessorWithIndex<u32>(asset.get(), indices, [&mesh, initial_index](u32 index, u32 idx) {
                 mesh.indices[initial_index + idx] = index;
             });
-
-            model.meshes.push_back(std::move(mesh));
 
             if(!primitive.materialIndex.has_value()) { continue; }
 
