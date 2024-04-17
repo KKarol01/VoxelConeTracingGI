@@ -300,7 +300,7 @@ void RenderGraph::create_rendering_resources() {
     for(u32 i=0; i<layout_handles.size(); ++i) {
         renderpasses.at(i).descriptor = layout_handles.at(i);
         for(const auto& e : descriptors.at(i)) {
-            descriptor_buffer->allocate_descriptor(layout_handles.at(i), e.first, e.second);
+            descriptor_buffer->write_descriptor(layout_handles.at(i), e.first, e.second);
         }
     }
 }
@@ -584,20 +584,8 @@ void RenderGraph::render(vk::CommandBuffer cmd, vk::Image swapchain_image, vk::I
             if(pass.pipeline) {
                 auto* renderer = get_context().renderer;
                 cmd.bindPipeline(to_vk_bind_point(pass.pipeline->type), pass.pipeline->pipeline);
-                // cmd.bindDescriptorBuffersEXT() - assuming it's done before calling rendergraph's render()
 
                 if(pass.descriptor) {
-                    u32 indices[] {0};
-                    u64 offsets[] {
-                        descriptor_buffer->get_set_offset(pass.descriptor)
-                    };
-                    // cmd.setDescriptorBufferOffsetsEXT(
-                    //     to_vk_bind_point(pass.pipeline->type),
-                    //     pass.pipeline->layout.layout,
-                    //     1,
-                    //     indices,
-                    //     offsets
-                    // );
                 }
 
                 if(pass.pipeline->type == PipelineType::Graphics) {

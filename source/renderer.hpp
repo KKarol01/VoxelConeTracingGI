@@ -56,6 +56,7 @@ template<> struct VulkanObjectType<vk::PipelineLayout> { static inline constexpr
 template<> struct VulkanObjectType<vk::ShaderModule> { static inline constexpr vk::ObjectType type = vk::ObjectType::eShaderModule; };
 template<> struct VulkanObjectType<vk::DescriptorSetLayout> { static inline constexpr vk::ObjectType type = vk::ObjectType::eDescriptorSetLayout; };
 template<> struct VulkanObjectType<vk::DescriptorPool> { static inline constexpr vk::ObjectType type = vk::ObjectType::eDescriptorPool; };
+template<> struct VulkanObjectType<vk::DescriptorSet> { static inline constexpr vk::ObjectType type = vk::ObjectType::eDescriptorSet; };
 template<> struct VulkanObjectType<vk::Image> { static inline constexpr vk::ObjectType type = vk::ObjectType::eImage; };
 template<> struct VulkanObjectType<vk::ImageView> { static inline constexpr vk::ObjectType type = vk::ObjectType::eImageView; };
 
@@ -183,9 +184,7 @@ public:
         PFN_vkGetDeviceProcAddr get_device_proc_addr;
     } vulkan_function_pointers;
     
-    Handle<DescriptorBufferAllocation> global_set;
-    Handle<DescriptorBufferAllocation> material_set;
-
+    Handle<DescriptorBufferAllocation> global_set, material_set;
     Texture3D voxel_albedo, voxel_normal, voxel_radiance;
     Texture2D depth_texture;
     Buffer global_buffer;
@@ -196,8 +195,7 @@ public:
     Pipeline pp_imgui;
     bool recompile_pipelines = false;
 
-    DescriptorBuffer* descriptor_buffer;
-    DescriptorBuffer* material_descriptor_buffer;
+    DescriptorSet* descriptor_set;
     RenderGraph* render_graph;
     RendererAllocator* allocator;
     GpuScene render_scene;

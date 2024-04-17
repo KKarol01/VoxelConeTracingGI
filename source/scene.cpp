@@ -15,19 +15,19 @@ static Texture2D get_asset_texture(const fastgltf::Asset* asset, u64 texture_ind
         return tex->second;
     } 
 
-    return *std::visit(fastgltf::visitor{
-        [](auto&) -> Texture2D* { return nullptr; },
-        [&cache = *cache, &name = image.name](const fastgltf::sources::Array& vec) -> Texture2D* {
-            int x, y, ch;
-            auto raw_image = reinterpret_cast<std::byte*>(stbi_load_from_memory(vec.bytes.data(), vec.bytes.size(), &x, &y, &ch, 4));
-            auto new_tex = &cache.insert({
-                name,
-                // Texture2D{std::format("scene_texture_2d_{}", name), (u32)x, (u32)y, vk::Format::eR8G8B8A8Unorm, (u32)std::log2f(std::min(x, y)) + 1, vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eTransferSrc, std::span{raw_image, x*y*4u}}
-                Texture2D{std::format("scene_texture_2d_{}", name), (u32)x, (u32)y, vk::Format::eR8G8B8A8Unorm, 1u, vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eTransferSrc, std::span{raw_image, x*y*4u}}
-            }).first->second;
-            return new_tex;
-        }
-    }, image.data);
+    if(const auto* array = std::get_if<fastgltf::sources::Array>(&image.data)) {
+        int x, y, ch;
+        auto raw_image = reinterpret_cast<std::byte*>(stbi_load_from_memory(array->bytes.data(), array->bytes.size(), &x, &y, &ch, 4));
+        auto& new_tex = cache->insert({
+            image.name,
+            // Texture2D{std::format("scene_texture_2d_{}", name), (u32)x, (u32)y, vk::Format::eR8G8B8A8Unorm, (u32)std::log2f(std::min(x, y)) + 1, vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eTransferSrc, std::span{raw_image, x*y*4u}}
+            Texture2D{std::format("scene_texture_2d_{}", image.name), (u32)x, (u32)y, vk::Format::eR8G8B8A8Unorm, 1u, vk::ImageUsageFlagBits::eSampled | vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eTransferSrc, std::span{raw_image, x*y*4u}}
+        }).first->second;
+        return new_tex;
+    } else {
+        std::terminate();
+        return {};
+    }
 }
 
 Handle<Model> Scene::load_model(const std::filesystem::path& path) {

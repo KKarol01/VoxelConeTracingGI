@@ -418,7 +418,7 @@ void Renderer::setup_scene() {
 
     render_scene.vertex_buffer = Buffer{"scene_vertex_buffer", vk::BufferUsageFlagBits::eVertexBuffer, false, std::as_bytes(std::span{vertices})};
     render_scene.index_buffer = Buffer{"scene_index_buffer", vk::BufferUsageFlagBits::eIndexBuffer, false, std::as_bytes(std::span{indices})};
-    render_scene.instance_buffer = Buffer{"scene_instance_buffer", vk::BufferUsageFlagBits::eStorageBuffer | vk::BufferUsageFlagBits::eShaderDeviceAddress, true, std::as_bytes(std::span{instanced_meshes})};
+    render_scene.instance_buffer = Buffer{"scene_instance_buffer", vk::BufferUsageFlagBits::eStorageBuffer, true, std::as_bytes(std::span{instanced_meshes})};
     render_scene.indirect_commands_buffer = Buffer{"scene_indirect_buffer", vk::BufferUsageFlagBits::eIndirectBuffer, true, std::as_bytes(std::span{indirect_commands})};
     render_scene.draw_count = indirect_commands.size();
 
@@ -426,10 +426,10 @@ void Renderer::setup_scene() {
         {}, vk::Filter::eLinear, vk::Filter::eLinear, vk::SamplerMipmapMode::eLinear, vk::SamplerAddressMode::eRepeat, vk::SamplerAddressMode::eRepeat, vk::SamplerAddressMode::eRepeat,
         {}, false, {}, false, {}, 0, 11.0f
     });
-    material_descriptor_buffer->allocate_descriptor(material_set, 0, DescriptorBufferDescriptor{
+    descriptor_set->write_descriptor(material_set, 0, DescriptorBufferDescriptor{
         DescriptorType::StorageBuffer, std::make_pair(render_scene.instance_buffer.storage, render_scene.instance_buffer->size)
     });
-    material_descriptor_buffer->allocate_descriptor(material_set, 1, DescriptorBufferDescriptor{
+    descriptor_set->write_descriptor(material_set, 1, DescriptorBufferDescriptor{
         DescriptorType::Sampler, sampler
     });
     // material_descriptor_buffer->allocate_descriptor(material_set, 2, DescriptorBufferDescriptor{
@@ -438,7 +438,7 @@ void Renderer::setup_scene() {
     for(auto& e : material_textures) {
         if(!e) { continue; }
 
-        material_descriptor_buffer->allocate_descriptor(material_set, 2, DescriptorBufferDescriptor{
+        descriptor_set->write_descriptor(material_set, 2, DescriptorBufferDescriptor{
             DescriptorType::SampledImage, std::make_pair(e->default_view, vk::ImageLayout::eShaderReadOnlyOptimal)
         });
     }
@@ -477,30 +477,13 @@ void Renderer::render() {
     cmd.bindVertexBuffers(0, render_scene.vertex_buffer->buffer, 0ull);
     cmd.bindIndexBuffer(render_scene.index_buffer->buffer, 0, vk::IndexType::eUint32);
 
-    vk::DescriptorBufferBindingInfoEXT buffer_bindings[] {
-        vk::DescriptorBufferBindingInfoEXT {
-            descriptor_buffer->get_buffer_address(),
-            vk::BufferUsageFlagBits::eResourceDescriptorBufferEXT | vk::BufferUsageFlagBits::eSamplerDescriptorBufferEXT | vk::BufferUsageFlagBits::eShaderDeviceAddress
-        }, 
-        vk::DescriptorBufferBindingInfoEXT {
-            material_descriptor_buffer->get_buffer_address(),
-            vk::BufferUsageFlagBits::eResourceDescriptorBufferEXT | vk::BufferUsageFlagBits::eSamplerDescriptorBufferEXT | vk::BufferUsageFlagBits::eShaderDeviceAddress
-        }, 
+    vk::DescriptorSet sets[] {
+        descriptor_set->get_set(global_set),
+        descriptor_set->get_set(material_set),
     };
-    cmd.bindDescriptorBuffersEXT(buffer_bindings);
+    cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, pp_default_lit.layout.layout, 0, sets, {});
 
     cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, pp_default_lit.pipeline);
-
-    u32 buffers[] {0, 1};
-    u64 buffer_offsets[] {0, material_descriptor_buffer->get_set_offset(material_set)};
-
-    cmd.setDescriptorBufferOffsetsEXT(
-        vk::PipelineBindPoint::eGraphics,
-        pp_default_lit.layout.layout,
-        0, 
-        buffers,
-        buffer_offsets
-    );
 
     render_graph->render(cmd, swapchain_images.at(img), swapchain_views.at(img));
 
@@ -580,15 +563,10 @@ bool Renderer::initialize_vulkan() {
     desc_idx_features.shaderStorageImageArrayNonUniformIndexing = true;
     desc_idx_features.descriptorBindingSampledImageUpdateAfterBind = true;
     desc_idx_features.descriptorBindingStorageImageUpdateAfterBind = true;
+    desc_idx_features.descriptorBindingUniformBufferUpdateAfterBind = true;
+    desc_idx_features.descriptorBindingStorageBufferUpdateAfterBind = true;
     desc_idx_features.runtimeDescriptorArray = true;
 
-    vk::PhysicalDeviceDescriptorBufferFeaturesEXT desc_buffer_features;
-    desc_buffer_features.descriptorBuffer = true;
-    desc_buffer_features.descriptorBufferPushDescriptors = true;
-
-    vk::PhysicalDeviceBufferDeviceAddressFeatures dev_addr_features;
-    dev_addr_features.bufferDeviceAddress = true;
-    
     vk::PhysicalDeviceFeatures2 features;
     features.features.fragmentStoresAndAtomics = true;
     features.features.geometryShader = true;
@@ -601,8 +579,6 @@ bool Renderer::initialize_vulkan() {
         .add_pNext(&dyn_rend_features)
         .add_pNext(&host_query_features)
         .add_pNext(&synch2_features)
-        .add_pNext(&dev_addr_features)
-        .add_pNext(&desc_buffer_features)
         .build();
     if(!device_builder_result) {
         spdlog::error("Vulkan: failed to create device: {}", device_builder_result.error().message());
@@ -621,7 +597,7 @@ bool Renderer::initialize_vulkan() {
         .vkGetDeviceProcAddr = instance_result->fp_vkGetDeviceProcAddr
     };
     VmaAllocatorCreateInfo vma_info{
-        .flags = VMA_ALLOCATOR_CREATE_BUFFER_DEVICE_ADDRESS_BIT,
+        .flags = {},
         .physicalDevice = physical_device,
         .device = device,
         .pVulkanFunctions = &vma_vk_funcs,
@@ -689,23 +665,19 @@ bool Renderer::initialize_frame_resources() {
         set_debug_name(device, frames.at(i).in_flight_fence, std::format("frame_in_flight_fence_{}", i));
     }
 
-    descriptor_buffer = new DescriptorBuffer{physical_device, device, 1024};
-    material_descriptor_buffer = new DescriptorBuffer{physical_device, device, 1024};
-    auto layouts = descriptor_buffer->push_layouts({
+    descriptor_set = new DescriptorSet{device};
+    auto layouts = descriptor_set->push_layouts({
         {"global_set_layout", {
             {DescriptorType::UniformBuffer, 1}
         }},
-        
-    });
-    global_set = layouts.at(0);
-    layouts = material_descriptor_buffer->push_layouts({
         {"material_set_layout", {
             {DescriptorType::StorageBuffer, 1},
             {DescriptorType::Sampler, 1},
             {DescriptorType::SampledImage, 512, true}
         }}
     });
-    material_set = layouts.at(0);
+    global_set = layouts.at(0);
+    material_set = layouts.at(1);
 
     return true;
 }
@@ -863,8 +835,8 @@ bool Renderer::initialize_render_passes() {
             {vk::ShaderStageFlagBits::eFragment, &shaders.at(1)},
         })
         .with_descriptor_set_layouts({
-            descriptor_buffer->get_allocation(global_set).layout,
-            material_descriptor_buffer->get_allocation(material_set).layout,
+            descriptor_set->get_layout(global_set),
+            descriptor_set->get_layout(material_set),
         })
         .with_color_attachments({swapchain_format})
         .with_depth_attachment(vk::Format::eD32Sfloat)
@@ -916,8 +888,8 @@ bool Renderer::initialize_render_passes() {
         .build_graphics("imgui_pipeline");
 
     glm::mat4 global_buffer_size[2];
-    global_buffer = Buffer{"global_ubo", vk::BufferUsageFlagBits::eUniformBuffer | vk::BufferUsageFlagBits::eShaderDeviceAddress, true, std::as_bytes(std::span{global_buffer_size})};
-    descriptor_buffer->allocate_descriptor(global_set, 0, DescriptorBufferDescriptor{
+    global_buffer = Buffer{"global_ubo", vk::BufferUsageFlagBits::eUniformBuffer, true, std::as_bytes(std::span{global_buffer_size})};
+    descriptor_set->write_descriptor(global_set, 0, DescriptorBufferDescriptor{
         DescriptorType::UniformBuffer, std::make_tuple(global_buffer.storage, sizeof(global_buffer_size))
     });
 

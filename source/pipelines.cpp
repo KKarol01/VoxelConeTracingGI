@@ -189,7 +189,7 @@ Pipeline PipelineBuilder::build_graphics(std::string_view label) {
     // RasterizationState_.pNext = &conservative_rasterization;
 
     vk::GraphicsPipelineCreateInfo info{
-        vk::PipelineCreateFlagBits::eDescriptorBufferEXT,
+        {},
         stages,
         &VertexInputState_,
         &InputAssemblyState_,
@@ -223,7 +223,7 @@ Pipeline PipelineBuilder::build_compute(std::string_view label) {
     set_debug_name(renderer->device, layout.layout, std::format("{}_layout", label));
     
     vk::ComputePipelineCreateInfo info{
-        vk::PipelineCreateFlagBits::eDescriptorBufferEXT,
+        {},
         vk::PipelineShaderStageCreateInfo{
             {}, shaders.at(0).first, shaders.at(0).second->module, "main"
         },
@@ -286,7 +286,7 @@ PipelineLayout PipelineBuilder::coalesce_shader_resources_into_layout() {
     std::vector<vk::DescriptorSetLayout> set_layouts(PipelineLayout::MAX_DESCRIPTOR_SET_COUNT);
     for(u32 i=0; auto& lb : layout_bindings) {
         layout.descriptor_sets.at(i).layout = get_context().renderer->device.createDescriptorSetLayout(vk::DescriptorSetLayoutCreateInfo{
-            vk::DescriptorSetLayoutCreateFlagBits::eDescriptorBufferEXT,
+            {},
             lb
         });
         set_layouts.at(i) = layout.descriptor_sets.at(i).layout;

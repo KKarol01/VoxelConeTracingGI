@@ -192,7 +192,7 @@ struct RenderPass {
 class RenderGraph {
 public:
     RenderGraph() = default;
-    explicit RenderGraph(DescriptorBuffer* descriptor_buffer): descriptor_buffer(descriptor_buffer) {}
+    explicit RenderGraph(DescriptorSet* descriptor_buffer): descriptor_buffer(descriptor_buffer) {}
 
     RgResourceHandle add_resource(RGResource resource) {
         resources.push_back(std::move(resource));
@@ -230,7 +230,7 @@ private:
     void create_rendering_resources();
     BarrierStages deduce_stages_and_accesses(const RenderPass* src_pass, const RenderPass* dst_pass, const RPResource& src_resource, const RPResource& dst_resource, bool src_read, bool dst_read) const;
 
-    DescriptorBuffer* descriptor_buffer;
+    DescriptorSet* descriptor_buffer;
     std::vector<RGResource> resources;
     std::vector<RenderPass> renderpasses;
     std::vector<PassDependencies> stage_deps;

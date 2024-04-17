@@ -3,7 +3,7 @@
 #include "renderer_types.hpp"
 #include <vulkan/vulkan_structs.hpp>
 #include <vector>
-#include <unordered_map>
+#include <map>
 #include <variant>
 
 struct DescriptorBufferLayoutBinding {
@@ -15,39 +15,25 @@ struct DescriptorBufferLayoutBinding {
     bool is_runtime_sized;
 };
 
-struct DescriptorBufferLayout {
+struct DescriptorBufferLayout : public Handle<DescriptorBufferLayout> {
     constexpr DescriptorBufferLayout() = default;
     DescriptorBufferLayout(std::string_view name, const std::vector<DescriptorBufferLayoutBinding> &bindings)
-        : name(name), bindings(bindings) {}
+        : Handle(HandleGenerate), name(name), bindings(bindings) {}
 
     std::string name;
     std::vector<DescriptorBufferLayoutBinding> bindings;
-};
-
-struct DescriptorBufferSizes {
-    constexpr DescriptorBufferSizes() = default;
-    DescriptorBufferSizes(vk::PhysicalDevice pdev);
-    u64 get_offset_alignment() const { return pdev_descbuff_props.descriptorBufferOffsetAlignment; }
-    u64 get_descriptor_size(DescriptorType type) const;
-    vk::PhysicalDeviceDescriptorBufferPropertiesEXT pdev_descbuff_props;
-};
-
-struct DescriptorBufferRuntimeLayoutMetadata {
-    u32 max, count; 
+    vk::DescriptorSetLayout layout;
 };
 
 struct DescriptorBufferAllocation : public Handle<DescriptorBufferAllocation> {
     constexpr DescriptorBufferAllocation() = default;
-    constexpr DescriptorBufferAllocation(u64 where, u64 size, u32 binding_count, vk::DescriptorSetLayout layout)
-        : Handle(HandleGenerate), where(where), size(size), binding_count(binding_count), layout(layout) { }
-    
-    u64 where, size;
-    u32 binding_count;
+    constexpr DescriptorBufferAllocation(vk::DescriptorSet set, vk::DescriptorSetLayout layout, u32 variable_binding, u32 max_variable_size)
+        : Handle(HandleGenerate), set(set), layout(layout), variable_binding(variable_binding), max_variable_size(max_variable_size), current_variable_size(0u) {}
+    vk::DescriptorSet set;
     vk::DescriptorSetLayout layout;
-};
-
-struct DescriptorBufferFreeListItem {
-    u64 where, size;
+    u32 variable_binding;
+    u32 max_variable_size;
+    u32 current_variable_size;
 };
 
 struct DescriptorBufferDescriptor {
@@ -57,32 +43,29 @@ struct DescriptorBufferDescriptor {
                  vk::Sampler> payload;
 };
 
-class DescriptorBuffer {
+class DescriptorSet {
 public: 
-    DescriptorBuffer() = default;
-    DescriptorBuffer(vk::PhysicalDevice pdev, vk::Device device, u64 initial_size = 0ull);
+    DescriptorSet() = default;
+    DescriptorSet(vk::Device device);
 
     Handle<DescriptorBufferAllocation> push_layout(const DescriptorBufferLayout& layout);
     std::vector<Handle<DescriptorBufferAllocation>> push_layouts(const std::vector<DescriptorBufferLayout>& layouts);
-    bool allocate_descriptor(Handle<DescriptorBufferAllocation> layout, u32 binding, const DescriptorBufferDescriptor& descriptor);
-    bool allocate_descriptor(Handle<DescriptorBufferAllocation> layout, u32 binding, u32 array_index, const DescriptorBufferDescriptor& descriptor);
-    vk::DeviceAddress get_buffer_address() const;
-    u64 get_set_offset(Handle<DescriptorBufferAllocation> layout) const;
-    DescriptorBufferAllocation& get_allocation(Handle<DescriptorBufferAllocation> handle);
-    const DescriptorBufferAllocation& get_allocation(Handle<DescriptorBufferAllocation> handle) const;
+    bool write_descriptor(Handle<DescriptorBufferAllocation> handle, u32 binding, const DescriptorBufferDescriptor& descriptor);
+    bool write_descriptor(Handle<DescriptorBufferAllocation> handle, u32 binding, u32 array_index, const DescriptorBufferDescriptor& descriptor);
+    vk::DescriptorSet get_set(Handle<DescriptorBufferAllocation> handle);
+    vk::DescriptorSetLayout get_layout(Handle<DescriptorBufferAllocation> handle);
 
 private:
-    Handle<DescriptorBufferAllocation> push_layout(vk::DescriptorSetLayout vklayout, const DescriptorBufferLayout& layout);
-    std::pair<DescriptorBufferFreeListItem*, u64> find_free_item(u64 size);
-    u64 calculate_free_space() const;
-    void defragment();
-    bool resize(u64 new_size);
+    DescriptorBufferLayout* find_matching_layout(const DescriptorBufferLayout& layout);
+    std::vector<DescriptorType> get_layout_types(const DescriptorBufferLayout& layout);
+    DescriptorBufferAllocation& get_allocation(Handle<DescriptorBufferAllocation> handle);
+    bool is_pool_compatible_with_layout(const std::vector<DescriptorType>& pool, const DescriptorBufferLayout& layout);
+    void insert_compatible_pools_to_layout(const DescriptorBufferLayout& layout);
+    void propagate_pool_to_compatible_layouts(vk::DescriptorPool pool, const std::vector<DescriptorType>& types);
 
-    Buffer buffer;
-    vk::PhysicalDevice pdev;
     vk::Device device;
-    DescriptorBufferSizes sizes;
-    std::vector<DescriptorBufferFreeListItem> free_list;
-    std::vector<DescriptorBufferAllocation> set_layouts;
-    std::unordered_map<Handle<DescriptorBufferAllocation>, DescriptorBufferRuntimeLayoutMetadata> runtime_layout_metadatas;
+    std::vector<DescriptorBufferAllocation> sets;
+    std::vector<std::pair<vk::DescriptorPool, std::vector<DescriptorType>>> pools;
+    std::map<vk::DescriptorSetLayout, std::vector<vk::DescriptorPool>> layout_compatible_pools;
+    std::vector<DescriptorBufferLayout> layouts;
 };
