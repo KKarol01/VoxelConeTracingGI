@@ -539,7 +539,6 @@ bool Renderer::initialize_vulkan() {
     vkb::PhysicalDeviceSelector pdev_sel{instance_result.value(), _surface};
     auto pdev_sel_result = pdev_sel
         .set_minimum_version(1, 3)
-        .add_required_extension(VK_EXT_DESCRIPTOR_BUFFER_EXTENSION_NAME)
         .select();
     if(!pdev_sel_result) {
         spdlog::error("Vulkan: failed to find suitable physical device: {}", pdev_sel_result.error().message());
