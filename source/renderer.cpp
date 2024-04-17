@@ -426,19 +426,19 @@ void Renderer::setup_scene() {
         {}, vk::Filter::eLinear, vk::Filter::eLinear, vk::SamplerMipmapMode::eLinear, vk::SamplerAddressMode::eRepeat, vk::SamplerAddressMode::eRepeat, vk::SamplerAddressMode::eRepeat,
         {}, false, {}, false, {}, 0, 11.0f
     });
-    descriptor_set->write_descriptor(material_set, 0, DescriptorBufferDescriptor{
+    descriptor_set->write_descriptor(material_set, 0, DescriptorSetUpdate{
         DescriptorType::StorageBuffer, std::make_pair(render_scene.instance_buffer.storage, render_scene.instance_buffer->size)
     });
-    descriptor_set->write_descriptor(material_set, 1, DescriptorBufferDescriptor{
+    descriptor_set->write_descriptor(material_set, 1, DescriptorSetUpdate{
         DescriptorType::Sampler, sampler
     });
-    // material_descriptor_buffer->allocate_descriptor(material_set, 2, DescriptorBufferDescriptor{
+    // material_descriptor_buffer->allocate_descriptor(material_set, 2, DescriptorSetUpdate{
     //     DescriptorType::SampledImage, std::make_pair(material_textures.back()->default_view, vk::ImageLayout::eShaderReadOnlyOptimal)
     // });
     for(auto& e : material_textures) {
         if(!e) { continue; }
 
-        descriptor_set->write_descriptor(material_set, 2, DescriptorBufferDescriptor{
+        descriptor_set->write_descriptor(material_set, 2, DescriptorSetUpdate{
             DescriptorType::SampledImage, std::make_pair(e->default_view, vk::ImageLayout::eShaderReadOnlyOptimal)
         });
     }
@@ -888,7 +888,7 @@ bool Renderer::initialize_render_passes() {
 
     glm::mat4 global_buffer_size[2];
     global_buffer = Buffer{"global_ubo", vk::BufferUsageFlagBits::eUniformBuffer, true, std::as_bytes(std::span{global_buffer_size})};
-    descriptor_set->write_descriptor(global_set, 0, DescriptorBufferDescriptor{
+    descriptor_set->write_descriptor(global_set, 0, DescriptorSetUpdate{
         DescriptorType::UniformBuffer, std::make_tuple(global_buffer.storage, sizeof(global_buffer_size))
     });
 

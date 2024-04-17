@@ -240,14 +240,14 @@ const RPResource* RenderPass::get_resource(RgResourceHandle handle) const {
 void RenderGraph::create_rendering_resources() {
     auto* renderer = get_context().renderer;
 
-    std::vector<DescriptorBufferLayout> descriptor_layouts;
-    std::vector<std::vector<std::pair<u32, DescriptorBufferDescriptor>>> descriptors;
+    std::vector<DescriptorSetLayout> descriptor_layouts;
+    std::vector<std::vector<std::pair<u32, DescriptorSetUpdate>>> descriptors;
     descriptor_layouts.reserve(renderpasses.size());
     descriptors.resize(renderpasses.size());
 
     for(u32 i=0; i<renderpasses.size(); ++i) {
         auto& pass = renderpasses.at(i);
-        auto& descriptor_layout = descriptor_layouts.emplace_back(std::format("{}_rg_desc_layout", pass.name), std::vector<DescriptorBufferLayoutBinding>{});
+        auto& descriptor_layout = descriptor_layouts.emplace_back(std::format("{}_rg_desc_layout", pass.name), std::vector<DescriptorSetLayoutBinding>{});
         descriptor_layout.bindings.reserve(pass.resources.size());
         descriptors.at(i).reserve(pass.resources.size());
 
@@ -278,12 +278,12 @@ void RenderGraph::create_rendering_resources() {
                             auto* binding = pass.pipeline->layout.find_binding(rg_resource.name);
                             if(!binding) { return; }
 
-                            descriptor_layout.bindings.push_back(DescriptorBufferLayoutBinding{
+                            descriptor_layout.bindings.push_back(DescriptorSetLayoutBinding{
                                 binding->type,
                                 1,
                                 false
                             });
-                            descriptors.at(i).emplace_back(binding->binding, DescriptorBufferDescriptor{
+                            descriptors.at(i).emplace_back(binding->binding, DescriptorSetUpdate{
                                 binding->type,
                                 std::make_pair(view, to_vk_layout(rp_resource.texture_info.required_layout))
                             });

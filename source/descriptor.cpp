@@ -2,7 +2,7 @@
 #include "renderer.hpp"
 #include <vulkan/vulkan.hpp>
 
-static vk::DescriptorSetLayout create_set_layout(vk::Device device, const DescriptorBufferLayout& layout) {
+static vk::DescriptorSetLayout create_set_layout(vk::Device device, const DescriptorSetLayout& layout) {
     static constexpr vk::ShaderStageFlags all_stages = 
         vk::ShaderStageFlagBits::eVertex | 
         vk::ShaderStageFlagBits::eGeometry | 
@@ -42,7 +42,7 @@ static vk::DescriptorSetLayout create_set_layout(vk::Device device, const Descri
     return vklayout;
 } 
 
-static vk::DescriptorPool create_set_pool(vk::Device device, const DescriptorBufferLayout& layout) {
+static vk::DescriptorPool create_set_pool(vk::Device device, const DescriptorSetLayout& layout) {
     std::unordered_map<DescriptorType, u32> counts;
     u32 max_sets = 0;
 
@@ -73,7 +73,7 @@ static vk::DescriptorPool create_set_pool(vk::Device device, const DescriptorBuf
 
 DescriptorSet::DescriptorSet(vk::Device device): device(device) { }
 
-Handle<DescriptorBufferAllocation> DescriptorSet::push_layout(const DescriptorBufferLayout& layout) {
+Handle<DescriptorSetAllocation> DescriptorSet::push_layout(const DescriptorSetLayout& layout) {
     if(layout.bindings.empty()) { return {}; }
 
     auto* matching_layout = find_matching_layout(layout);
@@ -115,14 +115,14 @@ Handle<DescriptorBufferAllocation> DescriptorSet::push_layout(const DescriptorBu
     return set;
 }
 
-std::vector<Handle<DescriptorBufferAllocation>> DescriptorSet::push_layouts(const std::vector<DescriptorBufferLayout>& layouts) {
-    std::vector<Handle<DescriptorBufferAllocation>> handles;
+std::vector<Handle<DescriptorSetAllocation>> DescriptorSet::push_layouts(const std::vector<DescriptorSetLayout>& layouts) {
+    std::vector<Handle<DescriptorSetAllocation>> handles;
     handles.reserve(layouts.size());
     for(auto& e : layouts) { handles.push_back(push_layout(e)); }
     return handles;
 }
 
-bool DescriptorSet::write_descriptor(Handle<DescriptorBufferAllocation> handle, u32 binding, const DescriptorBufferDescriptor& descriptor) {
+bool DescriptorSet::write_descriptor(Handle<DescriptorSetAllocation> handle, u32 binding, const DescriptorSetUpdate& descriptor) {
     auto& alloc = get_allocation(handle);
 
     if(alloc.max_variable_size <= alloc.current_variable_size) { 
@@ -133,7 +133,7 @@ bool DescriptorSet::write_descriptor(Handle<DescriptorBufferAllocation> handle, 
     return write_descriptor(handle, binding, alloc.variable_binding == binding ? alloc.current_variable_size++ : 0, descriptor);
 }
 
-bool DescriptorSet::write_descriptor(Handle<DescriptorBufferAllocation> handle, u32 binding, u32 array_index, const DescriptorBufferDescriptor& descriptor) {
+bool DescriptorSet::write_descriptor(Handle<DescriptorSetAllocation> handle, u32 binding, u32 array_index, const DescriptorSetUpdate& descriptor) {
     vk::WriteDescriptorSet write_set{
         get_allocation(handle).set,
         binding,
@@ -161,25 +161,25 @@ bool DescriptorSet::write_descriptor(Handle<DescriptorBufferAllocation> handle, 
     return true;
 }
 
-vk::DescriptorSet DescriptorSet::get_set(Handle<DescriptorBufferAllocation> handle) {
+vk::DescriptorSet DescriptorSet::get_set(Handle<DescriptorSetAllocation> handle) {
     return get_allocation(handle).set;
 }
 
-vk::DescriptorSetLayout DescriptorSet::get_layout(Handle<DescriptorBufferAllocation> handle) {
+vk::DescriptorSetLayout DescriptorSet::get_layout(Handle<DescriptorSetAllocation> handle) {
     return get_allocation(handle).layout;
 }
 
-std::vector<DescriptorType> DescriptorSet::get_layout_types(const DescriptorBufferLayout& layout) {
+std::vector<DescriptorType> DescriptorSet::get_layout_types(const DescriptorSetLayout& layout) {
     std::unordered_set<DescriptorType> types;
     for(auto& e : layout.bindings) { types.insert(e.type); }
     return {begin(types), end(types)};
 }
 
-DescriptorBufferAllocation& DescriptorSet::get_allocation(Handle<DescriptorBufferAllocation> handle) {
+DescriptorSetAllocation& DescriptorSet::get_allocation(Handle<DescriptorSetAllocation> handle) {
     return *std::find(begin(sets), end(sets), handle);
 }
 
-DescriptorBufferLayout* DescriptorSet::find_matching_layout(const DescriptorBufferLayout& layout) {
+DescriptorSetLayout* DescriptorSet::find_matching_layout(const DescriptorSetLayout& layout) {
     for(auto& dslayout : layouts) {
         if(dslayout.bindings.size() != layout.bindings.size()) { continue; }
         for(u32 i=0; i<dslayout.bindings.size(); ++i) {
@@ -193,14 +193,14 @@ DescriptorBufferLayout* DescriptorSet::find_matching_layout(const DescriptorBuff
     return nullptr;
 }
 
-bool DescriptorSet::is_pool_compatible_with_layout(const std::vector<DescriptorType>& pool, const DescriptorBufferLayout& layout) {
+bool DescriptorSet::is_pool_compatible_with_layout(const std::vector<DescriptorType>& pool, const DescriptorSetLayout& layout) {
     const auto layout_types = get_layout_types(layout);
     std::unordered_set<DescriptorType> layout_types_set{begin(layout_types), end(layout_types)};
     for(auto pool_type : pool) { layout_types_set.erase(pool_type); }
     return layout_types_set.empty();
 }
 
-void DescriptorSet::insert_compatible_pools_to_layout(const DescriptorBufferLayout& layout) {
+void DescriptorSet::insert_compatible_pools_to_layout(const DescriptorSetLayout& layout) {
     for(auto& pool : pools) {
         if(is_pool_compatible_with_layout(pool.second, layout)) {
             layout_compatible_pools[layout.layout].push_back(pool.first);

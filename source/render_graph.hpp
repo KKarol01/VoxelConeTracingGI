@@ -180,7 +180,7 @@ struct RenderPass {
 
     std::string name;
     Pipeline* pipeline{};
-    Handle<DescriptorBufferAllocation> descriptor;
+    Handle<DescriptorSetAllocation> descriptor;
     std::function<void(vk::CommandBuffer)> func;
     RenderPassRenderingExtent extent;
     std::vector<RPResource> resources;

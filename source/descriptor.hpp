@@ -6,8 +6,8 @@
 #include <map>
 #include <variant>
 
-struct DescriptorBufferLayoutBinding {
-    DescriptorBufferLayoutBinding(DescriptorType type, u32 count, bool is_runtime_sized = false)
+struct DescriptorSetLayoutBinding {
+    DescriptorSetLayoutBinding(DescriptorType type, u32 count, bool is_runtime_sized = false)
         : type(type), count(count), is_runtime_sized(is_runtime_sized) {}
 
     DescriptorType type;
@@ -15,19 +15,19 @@ struct DescriptorBufferLayoutBinding {
     bool is_runtime_sized;
 };
 
-struct DescriptorBufferLayout : public Handle<DescriptorBufferLayout> {
-    constexpr DescriptorBufferLayout() = default;
-    DescriptorBufferLayout(std::string_view name, const std::vector<DescriptorBufferLayoutBinding> &bindings)
+struct DescriptorSetLayout : public Handle<DescriptorSetLayout> {
+    constexpr DescriptorSetLayout() = default;
+    DescriptorSetLayout(std::string_view name, const std::vector<DescriptorSetLayoutBinding> &bindings)
         : Handle(HandleGenerate), name(name), bindings(bindings) {}
 
     std::string name;
-    std::vector<DescriptorBufferLayoutBinding> bindings;
+    std::vector<DescriptorSetLayoutBinding> bindings;
     vk::DescriptorSetLayout layout;
 };
 
-struct DescriptorBufferAllocation : public Handle<DescriptorBufferAllocation> {
-    constexpr DescriptorBufferAllocation() = default;
-    constexpr DescriptorBufferAllocation(vk::DescriptorSet set, vk::DescriptorSetLayout layout, u32 variable_binding, u32 max_variable_size)
+struct DescriptorSetAllocation : public Handle<DescriptorSetAllocation> {
+    constexpr DescriptorSetAllocation() = default;
+    constexpr DescriptorSetAllocation(vk::DescriptorSet set, vk::DescriptorSetLayout layout, u32 variable_binding, u32 max_variable_size)
         : Handle(HandleGenerate), set(set), layout(layout), variable_binding(variable_binding), max_variable_size(max_variable_size), current_variable_size(0u) {}
     vk::DescriptorSet set;
     vk::DescriptorSetLayout layout;
@@ -36,7 +36,7 @@ struct DescriptorBufferAllocation : public Handle<DescriptorBufferAllocation> {
     u32 current_variable_size;
 };
 
-struct DescriptorBufferDescriptor {
+struct DescriptorSetUpdate {
     DescriptorType type;
     std::variant<std::tuple<vk::ImageView, vk::ImageLayout>, 
                  std::tuple<Handle<GpuBuffer>, u64>,
@@ -48,24 +48,24 @@ public:
     DescriptorSet() = default;
     DescriptorSet(vk::Device device);
 
-    Handle<DescriptorBufferAllocation> push_layout(const DescriptorBufferLayout& layout);
-    std::vector<Handle<DescriptorBufferAllocation>> push_layouts(const std::vector<DescriptorBufferLayout>& layouts);
-    bool write_descriptor(Handle<DescriptorBufferAllocation> handle, u32 binding, const DescriptorBufferDescriptor& descriptor);
-    bool write_descriptor(Handle<DescriptorBufferAllocation> handle, u32 binding, u32 array_index, const DescriptorBufferDescriptor& descriptor);
-    vk::DescriptorSet get_set(Handle<DescriptorBufferAllocation> handle);
-    vk::DescriptorSetLayout get_layout(Handle<DescriptorBufferAllocation> handle);
+    Handle<DescriptorSetAllocation> push_layout(const DescriptorSetLayout& layout);
+    std::vector<Handle<DescriptorSetAllocation>> push_layouts(const std::vector<DescriptorSetLayout>& layouts);
+    bool write_descriptor(Handle<DescriptorSetAllocation> handle, u32 binding, const DescriptorSetUpdate& descriptor);
+    bool write_descriptor(Handle<DescriptorSetAllocation> handle, u32 binding, u32 array_index, const DescriptorSetUpdate& descriptor);
+    vk::DescriptorSet get_set(Handle<DescriptorSetAllocation> handle);
+    vk::DescriptorSetLayout get_layout(Handle<DescriptorSetAllocation> handle);
 
 private:
-    DescriptorBufferLayout* find_matching_layout(const DescriptorBufferLayout& layout);
-    std::vector<DescriptorType> get_layout_types(const DescriptorBufferLayout& layout);
-    DescriptorBufferAllocation& get_allocation(Handle<DescriptorBufferAllocation> handle);
-    bool is_pool_compatible_with_layout(const std::vector<DescriptorType>& pool, const DescriptorBufferLayout& layout);
-    void insert_compatible_pools_to_layout(const DescriptorBufferLayout& layout);
+    DescriptorSetLayout* find_matching_layout(const DescriptorSetLayout& layout);
+    std::vector<DescriptorType> get_layout_types(const DescriptorSetLayout& layout);
+    DescriptorSetAllocation& get_allocation(Handle<DescriptorSetAllocation> handle);
+    bool is_pool_compatible_with_layout(const std::vector<DescriptorType>& pool, const DescriptorSetLayout& layout);
+    void insert_compatible_pools_to_layout(const DescriptorSetLayout& layout);
     void propagate_pool_to_compatible_layouts(vk::DescriptorPool pool, const std::vector<DescriptorType>& types);
 
     vk::Device device;
-    std::vector<DescriptorBufferAllocation> sets;
+    std::vector<DescriptorSetAllocation> sets;
     std::vector<std::pair<vk::DescriptorPool, std::vector<DescriptorType>>> pools;
     std::map<vk::DescriptorSetLayout, std::vector<vk::DescriptorPool>> layout_compatible_pools;
-    std::vector<DescriptorBufferLayout> layouts;
+    std::vector<DescriptorSetLayout> layouts;
 };
