@@ -78,47 +78,116 @@ void RendererAllocator::complete_jobs(vk::CommandBuffer cmd) {
 
     u64 offset = 0ull;
     for(auto& job : jobs) {
-        std::visit(
-            visitor{
-                [&job](auto&&) { spdlog::error("Unsupported job type: {}", job.storage.index()); },
-                [&cmd, &staging_buffer, &offset, &job, this] (Handle<TextureStorage>& handle) {
-                    auto& texture = get_texture(handle);
-                    vk::ImageMemoryBarrier2 barrier{
-                        vk::PipelineStageFlagBits2::eTopOfPipe, vk::AccessFlagBits2::eNone,
+        if(auto* handle = std::get_if<Handle<TextureStorage>>(&job.storage)) {
+            auto& texture = get_texture(*handle);
+
+            vk::ImageMemoryBarrier2 barrier{
+                vk::PipelineStageFlagBits2::eTopOfPipe, vk::AccessFlagBits2::eNone,
+                vk::PipelineStageFlagBits2::eTransfer, vk::AccessFlagBits2::eTransferWrite,
+                vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal,
+                {}, {}, texture.image, {deduce_vk_image_aspect(texture.format), 0, 1, 0, texture.layers}
+            };
+
+            cmd.pipelineBarrier2(vk::DependencyInfo{{}, {}, {}, barrier});
+
+            const auto copy_region = vk::BufferImageCopy2{offset, texture.width, texture.height, 
+                vk::ImageSubresourceLayers{deduce_vk_image_aspect(texture.format), 0, 0, texture.layers},
+                vk::Offset3D{0, 0, 0},
+                vk::Extent3D{texture.width, texture.height, texture.depth}
+            };
+
+            cmd.copyBufferToImage2(vk::CopyBufferToImageInfo2{
+                staging_buffer.buffer, texture.image, vk::ImageLayout::eTransferDstOptimal, copy_region
+            });
+
+            if(texture.mips > 1) {
+                barrier = {
+                    vk::PipelineStageFlagBits2::eTopOfPipe, vk::AccessFlagBits2::eNone,
+                    vk::PipelineStageFlagBits2::eTransfer, vk::AccessFlagBits2::eTransferWrite,
+                    vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal,
+                    {}, {}, texture.image, {deduce_vk_image_aspect(texture.format), 1, texture.mips - 1, 0, texture.layers}
+                };
+
+                cmd.pipelineBarrier2(vk::DependencyInfo{{}, {}, {}, barrier});
+
+                for(u32 mip = 1; mip < texture.mips; ++mip) {
+                    const auto pw = std::max(texture.width >> (mip - 1), 1u);
+                    const auto cw = std::max(texture.width >> (mip - 0), 1u);
+                    const auto ph = std::max(texture.height >> (mip - 1), 1u);
+                    const auto ch = std::max(texture.height >> (mip - 0), 1u);
+                    const auto pd = std::max(texture.depth >> (mip - 1), 1u);
+                    const auto cd = std::max(texture.depth >> (mip - 0), 1u);
+                    
+                    barrier = {
                         vk::PipelineStageFlagBits2::eTransfer, vk::AccessFlagBits2::eTransferWrite,
-                        vk::ImageLayout::eUndefined, vk::ImageLayout::eTransferDstOptimal,
-                        {}, {}, texture.image, {deduce_vk_image_aspect(texture.format), 0, 1, 0, 1}
+                        vk::PipelineStageFlagBits2::eTransfer, vk::AccessFlagBits2::eTransferRead,
+                        vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eTransferSrcOptimal,
+                        {}, {}, texture.image, {deduce_vk_image_aspect(texture.format), mip-1, 1, 0, texture.layers}
                     };
+
                     cmd.pipelineBarrier2(vk::DependencyInfo{{}, {}, {}, barrier});
-                    const auto copy_region = vk::BufferImageCopy2{offset, texture.width, texture.height, 
-                        vk::ImageSubresourceLayers{deduce_vk_image_aspect(texture.format), 0, 0, 1},
-                        vk::Offset3D{0, 0, 0},
-                        vk::Extent3D{texture.width, texture.height, texture.depth}
+
+                    const auto blit = vk::ImageBlit2{
+                        vk::ImageSubresourceLayers{deduce_vk_image_aspect(texture.format), mip-1, 0, texture.layers},
+                        {
+                            vk::Offset3D{0, 0, 0},
+                            vk::Offset3D{(i32)pw, (i32)ph, (i32)pd},
+                        },
+                        vk::ImageSubresourceLayers{deduce_vk_image_aspect(texture.format), mip, 0, texture.layers},
+                        {
+                            vk::Offset3D{0, 0, 0},
+                            vk::Offset3D{(i32)cw, (i32)ch, (i32)cd},
+                        },
                     };
-                    cmd.copyBufferToImage2(vk::CopyBufferToImageInfo2{
-                        staging_buffer.buffer, texture.image, vk::ImageLayout::eTransferDstOptimal, copy_region
+
+                    cmd.blitImage2(vk::BlitImageInfo2{
+                        texture.image, vk::ImageLayout::eTransferSrcOptimal,
+                        texture.image, vk::ImageLayout::eTransferDstOptimal,
+                        blit,
+                        vk::Filter::eLinear
                     });
 
                     barrier = {
-                        vk::PipelineStageFlagBits2::eTransfer, vk::AccessFlagBits2::eTransferWrite,
-                        vk::PipelineStageFlagBits2::eFragmentShader, vk::AccessFlagBits2::eShaderRead,
-                        vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eShaderReadOnlyOptimal,
-                        {}, {}, texture.image, {deduce_vk_image_aspect(texture.format), 0, 1, 0, 1}
+                        vk::PipelineStageFlagBits2::eTransfer, vk::AccessFlagBits2::eTransferRead,
+                        vk::PipelineStageFlagBits2::eFragmentShader, vk::AccessFlagBits2::eShaderSampledRead,
+                        vk::ImageLayout::eTransferSrcOptimal, vk::ImageLayout::eShaderReadOnlyOptimal,
+                        {}, {}, texture.image, {deduce_vk_image_aspect(texture.format), mip-1, 1, 0, texture.layers}
                     };
+
                     cmd.pipelineBarrier2(vk::DependencyInfo{{}, {}, {}, barrier});
-                    texture.current_layout = vk::ImageLayout::eShaderReadOnlyOptimal;
-                },
-                [&cmd, &staging_buffer, &offset, &job, this] (Handle<GpuBuffer>& handle) {
-                    const auto copy_region = vk::BufferCopy2{offset, 0, job.data.size()};
-                    cmd.copyBuffer2(vk::CopyBufferInfo2{
-                        staging_buffer.buffer,
-                        get_buffer(handle).buffer,
-                        copy_region
-                    });
-                },
-            },
-            job.storage
-        );
+
+                    if(mip == texture.mips - 1) {
+                        barrier = {
+                            vk::PipelineStageFlagBits2::eTransfer, vk::AccessFlagBits2::eTransferWrite,
+                            vk::PipelineStageFlagBits2::eFragmentShader, vk::AccessFlagBits2::eShaderSampledRead,
+                            vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eShaderReadOnlyOptimal,
+                            {}, {}, texture.image, {deduce_vk_image_aspect(texture.format), mip, 1, 0, texture.layers}
+                        };
+
+                        cmd.pipelineBarrier2(vk::DependencyInfo{{}, {}, {}, barrier});
+                    }
+                }
+            } else {
+                barrier = {
+                    vk::PipelineStageFlagBits2::eTransfer, vk::AccessFlagBits2::eTransferWrite,
+                    vk::PipelineStageFlagBits2::eFragmentShader, vk::AccessFlagBits2::eShaderRead,
+                    vk::ImageLayout::eTransferDstOptimal, vk::ImageLayout::eShaderReadOnlyOptimal,
+                    {}, {}, texture.image, {deduce_vk_image_aspect(texture.format), 0, 1, 0, 1}
+                };
+
+                cmd.pipelineBarrier2(vk::DependencyInfo{{}, {}, {}, barrier});
+            }
+
+            texture.current_layout = vk::ImageLayout::eShaderReadOnlyOptimal;
+        } else if(auto* handle = std::get_if<Handle<GpuBuffer>>(&job.storage)) {
+            const auto copy_region = vk::BufferCopy2{offset, 0, job.data.size()};
+            cmd.copyBuffer2(vk::CopyBufferInfo2{
+                staging_buffer.buffer,
+                get_buffer(*handle).buffer,
+                copy_region
+            });
+        } else { std::terminate(); }
+
         offset += job.data.size();
     }
 
@@ -501,7 +570,7 @@ void Renderer::render() {
 
     device.waitIdle();
 
-    // for(auto& e : deletion_queue) { e(); }
+    for(auto& e : deletion_queue) { e(); }
 }
 
 bool Renderer::initialize_vulkan() {
@@ -744,71 +813,15 @@ bool Renderer::initialize_render_passes() {
     }
     
     std::vector<Shader> shaders(irs.size());
-    for(u32 i=0; const auto& ir : irs) {
+    for(u32 i=0; i<irs.size(); ++i) {
+        auto& ir = irs.at(i);
         shaders.at(i) = Shader{
             .path = shader_paths.at(i).string(),
             .module = device.createShaderModule(vk::ShaderModuleCreateInfo{{}, ir.size() * sizeof(u32), ir.data()}),
             .resources = shader_resources.at(i)
         };
         set_debug_name(device, shaders.at(i).module, shader_paths.at(i).string());
-        ++i;
     }
-
-    #if 0
-    vk::DescriptorSetLayoutBinding global_set_bindings[] {
-        vk::DescriptorSetLayoutBinding{0, vk::DescriptorType::eUniformBuffer, 1, all_stages},
-    };
-
-    vk::DescriptorSetLayoutBinding material_set_bindings[] {
-        vk::DescriptorSetLayoutBinding{0, vk::DescriptorType::eStorageBuffer, 1, all_stages},
-        vk::DescriptorSetLayoutBinding{1, vk::DescriptorType::eSampledImage, 128, all_stages},
-    };
-
-    vk::DescriptorSetLayoutCreateInfo global_set_info{{}, global_set_bindings};
-
-    vk::DescriptorBindingFlags material_info_binding_flags[] {
-        {},
-        vk::DescriptorBindingFlagBits::eVariableDescriptorCount | vk::DescriptorBindingFlagBits::ePartiallyBound
-    };
-    vk::DescriptorSetLayoutBindingFlagsCreateInfo material_info_flags{
-        material_info_binding_flags   
-    };
-    vk::DescriptorSetLayoutCreateInfo material_info{{}, material_set_bindings, &material_info_flags};
-
-    vk::DescriptorPoolSize global_sizes[] {
-        vk::DescriptorPoolSize{vk::DescriptorType::eSampler, 1024},
-        vk::DescriptorPoolSize{vk::DescriptorType::eUniformBuffer, 1024},
-        vk::DescriptorPoolSize{vk::DescriptorType::eStorageBuffer, 1024},
-        vk::DescriptorPoolSize{vk::DescriptorType::eStorageImage, 1024},
-        vk::DescriptorPoolSize{vk::DescriptorType::eSampledImage, 1024},
-        vk::DescriptorPoolSize{vk::DescriptorType::eCombinedImageSampler, 10},
-    };
-    global_desc_pool = device.createDescriptorPool(vk::DescriptorPoolCreateInfo{
-        {},
-        1024,
-        global_sizes
-    });
-    set_debug_name(device, global_desc_pool, "global_pool");
-
-    global_set_layout = device.createDescriptorSetLayout(global_set_info);
-    set_debug_name(device, global_set_layout, "global_set_layout");
-
-    material_set_layout = device.createDescriptorSetLayout(material_info);
-    set_debug_name(device, material_set_layout, "material_set_layout");
-
-    global_set = DescriptorSet{device, global_desc_pool, global_set_layout};
-
-    u32 material_desc_counts[]{
-        128
-    };
-    vk::DescriptorSetVariableDescriptorCountAllocateInfo material_variable_alloc_info{material_desc_counts};
-    auto material_vk_set = device.allocateDescriptorSets(vk::DescriptorSetAllocateInfo{
-        global_desc_pool,
-        material_set_layout,
-        &material_variable_alloc_info
-    })[0];
-    material_set = DescriptorSet{material_vk_set};
-    #endif
 
     voxel_albedo = Texture3D{"voxel_albedo", 256, 256, 256, vk::Format::eR32Uint, 1, vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eTransferSrc | vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled};
     voxel_normal = Texture3D{"voxel_normal", 256, 256, 256, vk::Format::eR32Uint, 1, vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eTransferSrc | vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled};
@@ -1068,7 +1081,6 @@ bool Renderer::initialize_render_passes() {
             }
         });
     render_graph->add_render_pass(pass_presentation);
-
     render_graph->bake_graph();
     #endif
 

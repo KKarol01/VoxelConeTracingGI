@@ -90,16 +90,18 @@ Handle<DescriptorSetAllocation> DescriptorSet::push_layout(const DescriptorSetLa
     vk::DescriptorSetVariableDescriptorCountAllocateInfo variable_desc{variable_sizes};
     vk::DescriptorSetAllocateInfo info{nullptr, matching_layout->layout, &variable_desc};
     vk::DescriptorSet desc_set;
+    vk::DescriptorPool matching_pool;
 
     for(auto& compatible_pool : layout_compatible_pools[matching_layout->layout]) {
         try {
             info.setDescriptorPool(compatible_pool);
             desc_set = device.allocateDescriptorSets(info)[0];
+            matching_pool = compatible_pool;
             break;
         } catch(const std::exception& err) { desc_set = nullptr; }
     }
     if(!desc_set) {
-        auto matching_pool = create_set_pool(device, layout);
+        matching_pool = create_set_pool(device, layout);
         const auto layout_types = get_layout_types(layout);
         pools.emplace_back(matching_pool, layout_types);
         propagate_pool_to_compatible_layouts(matching_pool, layout_types);
@@ -108,7 +110,7 @@ Handle<DescriptorSetAllocation> DescriptorSet::push_layout(const DescriptorSetLa
     }
 
     set_debug_name(device, desc_set, std::format("{}_descriptor_set", layout.name));
-    auto& set = sets.emplace_back(desc_set, matching_layout->layout, layout.bindings.back().is_runtime_sized ? layout.bindings.size()-1 : -1ul, layout.bindings.back().count);
+    auto& set = sets.emplace_back(desc_set, matching_layout->layout, matching_pool, layout.bindings.back().is_runtime_sized ? layout.bindings.size()-1 : -1ul, layout.bindings.back().count);
 
     spdlog::debug("Descset: layout {}, handle {}", layout.name, matching_layout->handle);
 
@@ -167,6 +169,17 @@ vk::DescriptorSet DescriptorSet::get_set(Handle<DescriptorSetAllocation> handle)
 
 vk::DescriptorSetLayout DescriptorSet::get_layout(Handle<DescriptorSetAllocation> handle) {
     return get_allocation(handle).layout;
+}
+
+void DescriptorSet::free_allocation(Handle<DescriptorSetAllocation> handle) {
+    if(!handle) { return; }
+
+    for(u32 i=0; i<sets.size(); ++i) {
+        if(sets.at(i) == handle) {
+            device.freeDescriptorSets(sets.at(i).pool, sets.at(i).set);
+            return;
+        }
+    }
 }
 
 std::vector<DescriptorType> DescriptorSet::get_layout_types(const DescriptorSetLayout& layout) {

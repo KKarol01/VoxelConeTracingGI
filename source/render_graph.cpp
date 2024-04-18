@@ -260,53 +260,47 @@ void RenderGraph::create_rendering_resources() {
         for(const auto& rp_resource : pass.resources) {
             const auto& rg_resource = resources.at(rp_resource.resource);
 
-            std::visit(
-                visitor{
-                    [&](const std::pair<Texture, RGTextureAccesses>& resource) {
-                        const auto& [texture, accesses] = resource;
-                        if(!texture) { return; /*Swapchain image*/ }
+            if(auto* resource = std::get_if<std::pair<Texture, RGTextureAccesses>>(&rg_resource.resource)) {
+                const auto& [texture, accesses] = *resource;
+                if(!texture) { continue; /*Swapchain image*/ }
 
-                        auto view = renderer->device.createImageView(vk::ImageViewCreateInfo{
-                            {},
-                            texture.image,
-                            vk_img_type_to_vk_img_view_type(texture->type),
-                            rp_resource.texture_info.mutable_format == RGImageFormat::DeduceFromVkImage ? texture->format : to_vk_format(rp_resource.texture_info.mutable_format),
-                            {},
-                            to_vk_subresource_range(rp_resource.texture_info.range, deduce_img_aspect(rp_resource.usage))
-                        });
-                        set_debug_name(renderer->device, view, std::format("{}_rgview", rg_resource.name));
+                auto view = renderer->device.createImageView(vk::ImageViewCreateInfo{
+                    {},
+                    texture.image,
+                    vk_img_type_to_vk_img_view_type(texture->type),
+                    rp_resource.texture_info.mutable_format == RGImageFormat::DeduceFromVkImage ? texture->format : to_vk_format(rp_resource.texture_info.mutable_format),
+                    {},
+                    to_vk_subresource_range(rp_resource.texture_info.range, deduce_img_aspect(rp_resource.usage))
+                });
+                set_debug_name(renderer->device, view, std::format("{}_rgview", rg_resource.name));
 
-                        image_views.emplace(std::make_pair(&pass, rp_resource.resource), view);
+                image_views.emplace(std::make_pair(&pass, rp_resource.resource), view);
 
-                        if(rp_resource.usage != RGResourceUsage::Image) { return; }
+                if(rp_resource.usage != RGResourceUsage::Image) { continue; }
 
-                        if(pass.pipeline) {
-                            auto* binding = pass.pipeline->layout.find_binding(rg_resource.name);
-                            if(!binding) { return; }
+                if(pass.pipeline) {
+                    auto* binding = pass.pipeline->layout.find_binding(rg_resource.name);
+                    if(!binding) { continue; }
 
-                            descriptor_layout.bindings.push_back(DescriptorSetLayoutBinding{
-                                binding->type,
-                                1,
-                                false
-                            });
-                            descriptors.at(i).emplace_back(binding->binding, DescriptorSetUpdate{
-                                binding->type,
-                                std::make_pair(view, to_vk_layout(rp_resource.texture_info.required_layout))
-                            });
-                        }
-                    },
-                    [](const auto&) { std::terminate(); }
-                },
-                rg_resource.resource
-            );
+                    descriptor_layout.bindings.push_back(DescriptorSetLayoutBinding{
+                        binding->type,
+                        1,
+                        false
+                    });
+                    descriptors.at(i).emplace_back(binding->binding, DescriptorSetUpdate{
+                        binding->type,
+                        std::make_pair(view, to_vk_layout(rp_resource.texture_info.required_layout))
+                    });
+                }
+            } else { std::terminate(); }
         }
     }
 
-    const auto layout_handles = descriptor_buffer->push_layouts(descriptor_layouts);
+    const auto layout_handles = descriptor_set->push_layouts(descriptor_layouts);
     for(u32 i=0; i<layout_handles.size(); ++i) {
         renderpasses.at(i).descriptor = layout_handles.at(i);
         for(const auto& e : descriptors.at(i)) {
-            descriptor_buffer->write_descriptor(layout_handles.at(i), e.first, e.second);
+            descriptor_set->write_descriptor(layout_handles.at(i), e.first, e.second);
         }
     }
 }
@@ -385,6 +379,9 @@ RenderGraph::BarrierStages RenderGraph::deduce_stages_and_accesses(const RenderP
 
 void RenderGraph::clear_resources() {
     resources.clear(); 
+    for(auto& rp : renderpasses) {
+        descriptor_set->free_allocation(rp.descriptor);
+    }
     renderpasses.clear();
     stage_deps.clear();
     stage_deps_counts.clear();

@@ -27,10 +27,11 @@ struct DescriptorSetLayout : public Handle<DescriptorSetLayout> {
 
 struct DescriptorSetAllocation : public Handle<DescriptorSetAllocation> {
     constexpr DescriptorSetAllocation() = default;
-    constexpr DescriptorSetAllocation(vk::DescriptorSet set, vk::DescriptorSetLayout layout, u32 variable_binding, u32 max_variable_size)
-        : Handle(HandleGenerate), set(set), layout(layout), variable_binding(variable_binding), max_variable_size(max_variable_size), current_variable_size(0u) {}
+    constexpr DescriptorSetAllocation(vk::DescriptorSet set, vk::DescriptorSetLayout layout, vk::DescriptorPool pool, u32 variable_binding, u32 max_variable_size)
+        : Handle(HandleGenerate), set(set), layout(layout), pool(pool), variable_binding(variable_binding), max_variable_size(max_variable_size), current_variable_size(0u) {}
     vk::DescriptorSet set;
     vk::DescriptorSetLayout layout;
+    vk::DescriptorPool pool;
     u32 variable_binding;
     u32 max_variable_size;
     u32 current_variable_size;
@@ -54,6 +55,7 @@ public:
     bool write_descriptor(Handle<DescriptorSetAllocation> handle, u32 binding, u32 array_index, const DescriptorSetUpdate& descriptor);
     vk::DescriptorSet get_set(Handle<DescriptorSetAllocation> handle);
     vk::DescriptorSetLayout get_layout(Handle<DescriptorSetAllocation> handle);
+    void free_allocation(Handle<DescriptorSetAllocation> handle);
 
 private:
     DescriptorSetLayout* find_matching_layout(const DescriptorSetLayout& layout);
