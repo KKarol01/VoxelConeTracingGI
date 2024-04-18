@@ -77,8 +77,8 @@ struct RGTextureAccess {
     Represents a single access to a texture
 */
 struct RGLayoutAccess {
-    u32 access_idx;
-    bool is_read;
+    u32 access_idx : 31;
+    u32 is_read : 1;
 };
 
 /*
@@ -112,6 +112,7 @@ public:
     RGTextureAccess& get_layout_texture_access(RGLayoutAccess access);
     const RGTextureAccess& get_layout_texture_access(RGLayoutAccess access) const;
     RGLayoutChangeQuery query_layout_changes(TextureRange range, bool is_read) const;
+    void clear();
 
 private:
     std::vector<RGTextureAccess> last_read, last_written;

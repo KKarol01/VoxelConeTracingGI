@@ -167,6 +167,12 @@ RGLayoutChangeQuery RGTextureAccesses::query_layout_changes(TextureRange range, 
     return query;
 }
 
+void RGTextureAccesses::clear() {
+    last_read.clear();
+    last_written.clear();
+    layouts.clear();
+}
+
 RenderPass& RenderPass::set_name(const std::string& name) {
     this->name = name;
     return *this;
@@ -396,6 +402,12 @@ void RenderGraph::bake_graph() {
 #ifdef RG_DEBUG_PRINT
     const auto t1 = std::chrono::steady_clock::now();
 #endif
+
+    for(auto& e : resources) { 
+        if(auto* texture = std::get_if<std::pair<Texture, RGTextureAccesses>>(&e.resource)) {
+            texture->second.clear();
+        }
+    }
 
     std::vector<PassBarriers> rendering_stages;
     std::unordered_map<RenderPass*, u32> renderpass_stage;
