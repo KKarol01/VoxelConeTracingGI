@@ -51,6 +51,5 @@ target_compile_definitions(imgui
 set(TRACY_STATIC ON CACHE BOOL "" FORCE)
 set(TRACY_ENABLE ON CACHE BOOL "" FORCE)
 add_subdirectory(third_party/tracy)
-add_subdirectory(third_party/tracy/profiler)
 
 add_subdirectory(source)
