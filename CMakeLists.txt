@@ -48,4 +48,9 @@ target_compile_definitions(imgui
         IMGUI_IMPL_VULKAN_NO_PROTOTYPES
 )
 
+set(TRACY_STATIC ON CACHE BOOL "" FORCE)
+set(TRACY_ENABLE ON CACHE BOOL "" FORCE)
+add_subdirectory(third_party/tracy)
+add_subdirectory(third_party/tracy/profiler)
+
 add_subdirectory(source)

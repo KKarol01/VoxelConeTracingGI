@@ -34,6 +34,7 @@ target_compile_definitions(vxgi
         NOMINMAX
         VULKAN_HPP_DISPATCH_LOADER_DYNAMIC=1
         VK_NO_PROTOTYPES
+        TRACY_ENABLE
 )
 
 target_precompile_headers(vxgi
@@ -70,4 +71,5 @@ target_link_libraries(vxgi
         $<$<CONFIG:Debug>: spirv-cross-cored>
         $<$<CONFIG:Release>: spirv-cross-core>
         libomp
+        TracyClient
 )

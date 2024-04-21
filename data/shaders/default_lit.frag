@@ -253,8 +253,6 @@ void main() {
     vec3 albedo = frag_color;
     Material mat = materials[frag_instance_index];
     if(mat.diffuse_idx >= 0) {
-        uint diff = min(max(mat.diffuse_idx, 0), 24);
-        albedo = vec3(float(diff) / 24.0);
         albedo = texture(sampler2D(material_textures[nonuniformEXT(mat.diffuse_idx)], material_sampler), frag_uv).rgb;
     }
     // vec3 normal = texture(sampler2D(tex_normal, sampler1), frag_uv).rgb;

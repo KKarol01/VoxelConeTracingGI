@@ -11,7 +11,10 @@
 #include <stb/stb_include.h>
 #include <glm/glm.hpp>
 
+#include <tracy/Tracy.hpp>
+
 int main() {
+    
     auto& ctx = get_context();
     ctx.scene = new Scene{};
     ctx.camera = new Camera{};
@@ -36,6 +39,8 @@ int main() {
     });
 
     while(!glfwWindowShouldClose(r.window)) {
+        FrameMarkNamed("main");
+
         r.render();
 
         ctx.camera->update();

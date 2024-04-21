@@ -12,6 +12,7 @@ VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE
 #include <imgui/backends/imgui_impl_glfw.h>
 #include <imgui/backends/imgui_impl_vulkan.h>
 #include <format>
+#include <tracy/Tracy.hpp>
 
 void GpuScene::render(vk::CommandBuffer cmd) {
     cmd.drawIndexedIndirect(indirect_commands_buffer.buffer, 0, draw_count, sizeof(vk::DrawIndexedIndirectCommand));
@@ -460,7 +461,7 @@ void Renderer::setup_scene() {
             const auto instanced_mesh_idx = instanced_models_offsets.at(e.model) + parsed_gpu_model_instances[e.model] + idx;
             auto& instanced_mesh = instanced_meshes.at(instanced_mesh_idx); 
             instanced_mesh.diffuse_texture_idx = add_or_get_material_texture(f.material.diffuse_texture);
-            // instanced_mesh.normal_texture_idx = add_or_get_material_texture(f.material.normal_texture);
+            instanced_mesh.normal_texture_idx = add_or_get_material_texture(f.material.normal_texture);
             ++idx;
         }
         ++parsed_gpu_model_instances[e.model];
