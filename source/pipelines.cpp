@@ -18,7 +18,7 @@ Shader::Shader(vk::Device device, const std::filesystem::path& path) {
         {}, code.size() * sizeof(code[0]), code.data()
     });
 
-    set_debug_name(device, module, path.string());
+    set_debug_name(module, path.string());
 
     resources = get_shader_resources(code);
 }
@@ -48,7 +48,7 @@ void build_layout(std::string_view label, vk::Device device, DescriptorLayout& l
         &flag_info
     });
 
-    if(!label.empty()) { set_debug_name(device, layout.layout, label); }
+    if(!label.empty()) { set_debug_name(layout.layout, label); }
 }
 
 void build_layout(std::string_view label, vk::Device device, PipelineLayout& layout) {
@@ -66,7 +66,7 @@ void build_layout(std::string_view label, vk::Device device, PipelineLayout& lay
         &layout.push_constants
     });
 
-    if(!label.empty()) { set_debug_name(device, layout.layout, label); }
+    if(!label.empty()) { set_debug_name(layout.layout, label); }
 }
 
 Pipeline PipelineBuilder::build_graphics(std::string_view label) {
@@ -181,7 +181,7 @@ Pipeline PipelineBuilder::build_graphics(std::string_view label) {
     };
 
     auto pipeline = renderer->device.createGraphicsPipelines({}, info).value[0];
-    set_debug_name(renderer->device, pipeline, label);
+    set_debug_name(pipeline, label);
 
     return Pipeline{
         .type = vk::PipelineBindPoint::eGraphics,
@@ -194,7 +194,7 @@ Pipeline PipelineBuilder::build_compute(std::string_view label) {
     Shader compute_shader{renderer->device, shaders.at(0)};
 
     PipelineLayout layout = coalesce_shader_resources_into_layout({compute_shader});
-    set_debug_name(renderer->device, layout.layout, std::format("{}_layout", label));
+    set_debug_name(layout.layout, std::format("{}_layout", label));
 
     const auto type = deduce_shader_type(shaders.at(0));
     assert("Shader type must be compute" && type == vk::ShaderStageFlagBits::eVertex);
@@ -208,7 +208,7 @@ Pipeline PipelineBuilder::build_compute(std::string_view label) {
     };
 
     auto pipeline = renderer->device.createComputePipeline({}, info).value;
-    set_debug_name(renderer->device, pipeline, label);
+    set_debug_name(pipeline, label);
 
     return Pipeline{
         .type = vk::PipelineBindPoint::eCompute,

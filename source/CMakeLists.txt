@@ -7,8 +7,9 @@ add_custom_target(copy_data ALL
 add_executable(vxgi
     main.cpp
     renderer.cpp
-    context.cpp
     input.cpp
+    context.cpp
+    allocator.cpp
     render_graph.cpp
     pipelines.cpp
     scene.cpp

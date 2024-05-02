@@ -5,15 +5,14 @@
 #include "descriptor.hpp"
 #include "context.hpp"
 #include "scene.hpp"
-#include <vk_mem_alloc.h>
 #include <vulkan/vulkan.hpp>
 #include <GLFW/glfw3.h>
 #include <glm/glm.hpp>
 #include <vector>
 #include <array>
-#include <variant>
 
 class RenderGraph;
+class RendererAllocator;
 
 struct GpuMesh {
     const Mesh* mesh;
@@ -45,24 +44,6 @@ struct GpuScene {
     u32 draw_count; 
 };
 
-template<typename VkObject> struct VulkanObjectType;
-template<> struct VulkanObjectType<vk::SwapchainKHR> { static inline constexpr vk::ObjectType type = vk::ObjectType::eSwapchainKHR; };
-template<> struct VulkanObjectType<vk::CommandPool> { static inline constexpr vk::ObjectType type = vk::ObjectType::eCommandPool; };
-template<> struct VulkanObjectType<vk::CommandBuffer> { static inline constexpr vk::ObjectType type = vk::ObjectType::eCommandBuffer; };
-template<> struct VulkanObjectType<vk::Fence> { static inline constexpr vk::ObjectType type = vk::ObjectType::eFence; };
-template<> struct VulkanObjectType<vk::Semaphore> { static inline constexpr vk::ObjectType type = vk::ObjectType::eSemaphore; };
-template<> struct VulkanObjectType<vk::Buffer> { static inline constexpr vk::ObjectType type = vk::ObjectType::eBuffer; };
-template<> struct VulkanObjectType<vk::Pipeline> { static inline constexpr vk::ObjectType type = vk::ObjectType::ePipeline; };
-template<> struct VulkanObjectType<vk::PipelineLayout> { static inline constexpr vk::ObjectType type = vk::ObjectType::ePipelineLayout; };
-template<> struct VulkanObjectType<vk::ShaderModule> { static inline constexpr vk::ObjectType type = vk::ObjectType::eShaderModule; };
-template<> struct VulkanObjectType<vk::DescriptorSetLayout> { static inline constexpr vk::ObjectType type = vk::ObjectType::eDescriptorSetLayout; };
-template<> struct VulkanObjectType<vk::DescriptorPool> { static inline constexpr vk::ObjectType type = vk::ObjectType::eDescriptorPool; };
-template<> struct VulkanObjectType<vk::DescriptorSet> { static inline constexpr vk::ObjectType type = vk::ObjectType::eDescriptorSet; };
-template<> struct VulkanObjectType<vk::Image> { static inline constexpr vk::ObjectType type = vk::ObjectType::eImage; };
-template<> struct VulkanObjectType<vk::ImageView> { static inline constexpr vk::ObjectType type = vk::ObjectType::eImageView; };
-
-template<typename T> void set_debug_name(vk::Device device, T object, std::string_view name);
-
 inline vk::ImageViewType to_vk_view_type(vk::ImageType type) {
     switch (type) {
         case vk::ImageType::e1D: { return vk::ImageViewType::e1D; }
@@ -91,58 +72,6 @@ inline vk::ImageAspectFlags deduce_vk_image_aspect(vk::Format format) {
         }
     }
 }
-
-class RendererAllocator {
-    struct UploadJob {
-        UploadJob(std::variant<Handle<TextureAllocation>, Handle<BufferAllocation>> storage, std::span<const std::byte> data): storage(storage) {
-            this->data.resize(data.size_bytes());
-            std::memcpy(this->data.data(), data.data(), data.size_bytes());
-        }
-        std::variant<Handle<TextureAllocation>, Handle<BufferAllocation>> storage;
-        std::vector<std::byte> data;
-    };
-    
-public:
-    explicit RendererAllocator(vk::Device device, VmaAllocator vma): device(device), vma(vma) {}
-
-    Handle<TextureAllocation> create_texture_storage(std::string_view label, const vk::ImageCreateInfo& info, std::span<const std::byte> optional_data = {});
-    Handle<BufferAllocation> create_buffer(std::string_view label, vk::BufferUsageFlags usage, bool map_memory, u64 size_bytes);
-    Handle<BufferAllocation> create_buffer(std::string_view label, vk::BufferUsageFlags usage, bool map_memory, std::span<const std::byte> optional_data = {});
-
-    void destroy_buffer(Handle<BufferAllocation> handle) {
-        if(!handle) { return; }
-        auto* ptr = find_with_handle(handle, buffers);
-        if(!ptr) { return; }
-        vmaDestroyBuffer(vma, ptr->buffer, ptr->alloc);
-    }
-
-    TextureAllocation& get_texture(Handle<TextureAllocation> handle) { return *find_with_handle(handle, textures); }
-    BufferAllocation& get_buffer(Handle<BufferAllocation> handle) { return *find_with_handle(handle, buffers); }
-    const BufferAllocation& get_buffer(Handle<BufferAllocation> handle) const { return *find_with_handle(handle, buffers); }
-
-    bool has_jobs() const { return !jobs.empty(); }
-    void complete_jobs(vk::CommandBuffer cmd);
-
-private:
-    template<typename T> T* find_with_handle(Handle<T> handle, std::vector<T>& storage) {
-        auto it = std::lower_bound(storage.begin(), storage.end(), handle);
-        if(it == storage.end() || *it != handle) { return nullptr; }
-        return &*it;
-    }
-    template<typename T> const T* find_with_handle(Handle<T> handle, const std::vector<T>& storage) const {
-        auto it = std::lower_bound(storage.begin(), storage.end(), handle);
-        if(it == storage.end() || *it != handle) { return nullptr; }
-        return &*it;
-    }
-    BufferAllocation* create_buffer_ptr(std::string_view label, vk::BufferUsageFlags usage, bool map_memory, u64 size_bytes);
-    TextureAllocation* create_texture_ptr(std::string_view label, const vk::ImageCreateInfo& info);
-
-    vk::Device device;
-    VmaAllocator vma;
-    std::vector<TextureAllocation> textures;
-    std::vector<BufferAllocation> buffers;
-    std::vector<UploadJob> jobs;
-};
 
 class Renderer {
 public:
@@ -203,15 +132,3 @@ public:
 
     std::vector<std::function<void()>> deletion_queue;
 };
-
-template<typename T> void set_debug_name(vk::Device device, T object, std::string_view name) {
-    device.setDebugUtilsObjectNameEXT(vk::DebugUtilsObjectNameInfoEXT{
-        VulkanObjectType<T>::type, (u64)static_cast<T::NativeType>(object), name.data()
-    }, vk::DispatchLoaderDynamic{
-            get_context().renderer->instance,
-            get_context().renderer->vulkan_function_pointers.get_instance_proc_addr,
-            get_context().renderer->device,
-            get_context().renderer->vulkan_function_pointers.get_device_proc_addr
-        }
-    );
-}

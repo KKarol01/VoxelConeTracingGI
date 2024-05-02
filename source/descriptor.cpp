@@ -70,7 +70,7 @@ DescriptorSet DescriptorAllocator::allocate(std::string_view label, const Descri
         idx = this->pools.size();
         pools = &this->pools.emplace_back();
         pool = create_pool(layout, max_sets, *pools);
-        set_debug_name(device, pool->pool, std::format("{}_pool_{}", label, pools->pools.size()));
+        set_debug_name(pool->pool, std::format("{}_pool_{}", label, pools->pools.size()));
     } else { pool = &pools->pools.back(); }
 
     if(!pool) { 
@@ -93,7 +93,7 @@ DescriptorSet DescriptorAllocator::allocate(std::string_view label, const Descri
                 &variable_info
             })[0];
 
-            set_debug_name(device, set, label);
+            set_debug_name(set, label);
             
             pool->allocations++;
 

@@ -1,7 +1,7 @@
 #include "context.hpp"
 
-Context context;
+static Context ctx{};
 
 Context& get_context() {
-    return context;
+    return ctx;
 }

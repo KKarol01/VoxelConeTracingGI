@@ -274,7 +274,7 @@ void RenderGraph::create_rendering_resources() {
                     {},
                     to_vk_subresource_range(rp_resource.texture_info.range, deduce_img_aspect(rp_resource.usage))
                 });
-                set_debug_name(renderer->device, view, std::format("{}_rgview", rg_resource.name));
+                set_debug_name(view, std::format("{}_rgview", rg_resource.name));
 
                 image_views.emplace(std::make_pair(&pass, rp_resource.resource), view);
 

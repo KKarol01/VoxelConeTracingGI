@@ -1,6 +1,7 @@
 #pragma once
 
 #include "types.hpp"
+#include "context.hpp"
 #include <vulkan/vulkan_structs.hpp>
 #include <vk_mem_alloc.h>
 #include <vector>
@@ -111,3 +112,38 @@ struct Window {
     u32 width{1024}, height{768};
     GLFWwindow* window{nullptr};
 };
+
+template<typename VkObject> struct VulkanObjectType;
+template<> struct VulkanObjectType<vk::SwapchainKHR> { static inline constexpr vk::ObjectType type = vk::ObjectType::eSwapchainKHR; };
+template<> struct VulkanObjectType<vk::CommandPool> { static inline constexpr vk::ObjectType type = vk::ObjectType::eCommandPool; };
+template<> struct VulkanObjectType<vk::CommandBuffer> { static inline constexpr vk::ObjectType type = vk::ObjectType::eCommandBuffer; };
+template<> struct VulkanObjectType<vk::Fence> { static inline constexpr vk::ObjectType type = vk::ObjectType::eFence; };
+template<> struct VulkanObjectType<vk::Semaphore> { static inline constexpr vk::ObjectType type = vk::ObjectType::eSemaphore; };
+template<> struct VulkanObjectType<vk::Buffer> { static inline constexpr vk::ObjectType type = vk::ObjectType::eBuffer; };
+template<> struct VulkanObjectType<vk::Pipeline> { static inline constexpr vk::ObjectType type = vk::ObjectType::ePipeline; };
+template<> struct VulkanObjectType<vk::PipelineLayout> { static inline constexpr vk::ObjectType type = vk::ObjectType::ePipelineLayout; };
+template<> struct VulkanObjectType<vk::ShaderModule> { static inline constexpr vk::ObjectType type = vk::ObjectType::eShaderModule; };
+template<> struct VulkanObjectType<vk::DescriptorSetLayout> { static inline constexpr vk::ObjectType type = vk::ObjectType::eDescriptorSetLayout; };
+template<> struct VulkanObjectType<vk::DescriptorPool> { static inline constexpr vk::ObjectType type = vk::ObjectType::eDescriptorPool; };
+template<> struct VulkanObjectType<vk::DescriptorSet> { static inline constexpr vk::ObjectType type = vk::ObjectType::eDescriptorSet; };
+template<> struct VulkanObjectType<vk::Image> { static inline constexpr vk::ObjectType type = vk::ObjectType::eImage; };
+template<> struct VulkanObjectType<vk::ImageView> { static inline constexpr vk::ObjectType type = vk::ObjectType::eImageView; };
+
+struct SetDebugNameDetails {
+    static vk::Device device();
+    static vk::Instance instance();
+    static PFN_vkGetInstanceProcAddr get_instance_proc_addr();
+    static PFN_vkGetDeviceProcAddr get_device_proc_addr();
+};
+
+template<typename T> inline void set_debug_name(T object, std::string_view name) {
+    SetDebugNameDetails::device().setDebugUtilsObjectNameEXT(vk::DebugUtilsObjectNameInfoEXT{
+        VulkanObjectType<T>::type, (u64)static_cast<T::NativeType>(object), name.data()
+    }, vk::DispatchLoaderDynamic{
+            SetDebugNameDetails::instance(),
+            SetDebugNameDetails::get_instance_proc_addr(),
+            SetDebugNameDetails::device(),
+            SetDebugNameDetails::get_device_proc_addr(),
+        }
+    );
+}
