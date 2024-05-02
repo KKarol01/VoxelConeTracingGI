@@ -57,7 +57,6 @@ private:
 
     std::pair<DescriptorAllocator::Pools*, u32> find_matching_pools(const DescriptorLayout& layout);
     DescriptorPool* create_pool(const DescriptorLayout& layout, u32 max_sets, Pools& pools);
-    vk::DescriptorSetLayout create_layout(const DescriptorLayout& layout);
 
     vk::Device device;
     std::vector<DescriptorLayout> layouts;

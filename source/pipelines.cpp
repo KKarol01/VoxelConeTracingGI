@@ -23,6 +23,52 @@ Shader::Shader(vk::Device device, const std::filesystem::path& path) {
     resources = get_shader_resources(code);
 }
 
+void build_layout(std::string_view label, vk::Device device, DescriptorLayout& layout) {
+    static constexpr vk::ShaderStageFlags ALL_STAGE_FLAGS = 
+        vk::ShaderStageFlagBits::eFragment | 
+        vk::ShaderStageFlagBits::eVertex |
+        vk::ShaderStageFlagBits::eCompute | 
+        vk::ShaderStageFlagBits::eGeometry;
+
+    std::array<vk::DescriptorSetLayoutBinding, DescriptorLayout::MAX_BINDINGS> bindings{};
+    std::array<vk::DescriptorBindingFlags, DescriptorLayout::MAX_BINDINGS> flags{};
+
+    for(u32 b = 0; b < layout.count; ++b) {
+        bindings.at(b) = {b, layout.bindings.at(b).type, layout.bindings.at(b).count, ALL_STAGE_FLAGS};
+        flags.at(b) = vk::DescriptorBindingFlagBits::eUpdateAfterBind | vk::DescriptorBindingFlagBits::ePartiallyBound;
+        if(layout.variable_sized && b + 1u == layout.count) { flags.at(b) |= vk::DescriptorBindingFlagBits::eVariableDescriptorCount; }
+    }
+
+    vk::DescriptorSetLayoutBindingFlagsCreateInfo flag_info{layout.count, flags.data()};
+
+    layout.layout = device.createDescriptorSetLayout(vk::DescriptorSetLayoutCreateInfo{
+        vk::DescriptorSetLayoutCreateFlagBits::eUpdateAfterBindPool,
+        layout.count,
+        bindings.data(),
+        &flag_info
+    });
+
+    if(!label.empty()) { set_debug_name(device, layout.layout, label); }
+}
+
+void build_layout(std::string_view label, vk::Device device, PipelineLayout& layout) {
+    std::array<vk::DescriptorSetLayout, PipelineLayout::MAX_SETS> sets{};
+    for(u32 set = 0; set < layout.sets.size(); ++set) {
+        build_layout(std::format("{}_set_{}", label, set), device, layout.sets.at(set));
+        sets.at(set) = layout.sets.at(set).layout;
+    }
+    
+    layout.layout = device.createPipelineLayout(vk::PipelineLayoutCreateInfo{
+        {},
+        sets.size(),
+        sets.data(),
+        layout.push_constants.size > 0ull ? 1u : 0u,
+        &layout.push_constants
+    });
+
+    if(!label.empty()) { set_debug_name(device, layout.layout, label); }
+}
+
 Pipeline PipelineBuilder::build_graphics(std::string_view label) {
     std::vector<vk::PipelineShaderStageCreateInfo> stages;
     std::vector<Shader> compiled_shaders;
@@ -103,7 +149,7 @@ Pipeline PipelineBuilder::build_graphics(std::string_view label) {
     };
 
     PipelineLayout layout = coalesce_shader_resources_into_layout(compiled_shaders);
-    set_debug_name(renderer->device, layout.layout, std::format("{}_layout", label));
+    build_layout(std::format("{}_layout", label), renderer->device, layout);
 
     vk::PipelineRenderingCreateInfo dynamic_rendering = {
         {}, color_attachment_formats, depth_attachment_format
@@ -172,14 +218,7 @@ Pipeline PipelineBuilder::build_compute(std::string_view label) {
 }
 
 PipelineLayout PipelineBuilder::coalesce_shader_resources_into_layout(const std::vector<Shader>& shaders) {
-    auto device = renderer->device;
     PipelineLayout pipeline_layout{};
-
-    static constexpr vk::ShaderStageFlags ALL_STAGE_FLAGS = 
-        vk::ShaderStageFlagBits::eFragment | 
-        vk::ShaderStageFlagBits::eVertex |
-        vk::ShaderStageFlagBits::eCompute | 
-        vk::ShaderStageFlagBits::eGeometry;
 
     // Merge shaders's descriptor layouts
     for(const auto& s : shaders) {
@@ -204,37 +243,6 @@ PipelineLayout PipelineBuilder::coalesce_shader_resources_into_layout(const std:
             layout.count = std::max(layout.count, (u32)rs.size());
         }
     }
-
-    // Create descriptor layouts after merging
-    std::array<vk::DescriptorSetLayout, PipelineLayout::MAX_SETS> sets{};
-    for(u32 set = 0; set < pipeline_layout.sets.size(); ++set) {
-        auto& l = pipeline_layout.sets.at(set);
-        std::array<vk::DescriptorSetLayoutBinding, DescriptorLayout::MAX_BINDINGS> bindings{};
-        std::array<vk::DescriptorBindingFlags, DescriptorLayout::MAX_BINDINGS> flags{};
-
-        for(u32 b = 0; b < l.count; ++b) {
-            bindings.at(b) = {b, l.bindings.at(b).type, l.bindings.at(b).count, ALL_STAGE_FLAGS};
-            flags.at(b) = vk::DescriptorBindingFlagBits::eUpdateAfterBind | vk::DescriptorBindingFlagBits::ePartiallyBound;
-            if(l.variable_sized && b + 1u == l.count) { flags.at(b) |= vk::DescriptorBindingFlagBits::eVariableDescriptorCount; }
-        }
-
-        vk::DescriptorSetLayoutBindingFlagsCreateInfo flag_info{l.count, flags.data()};
-
-        l.layout = device.createDescriptorSetLayout(vk::DescriptorSetLayoutCreateInfo{
-            vk::DescriptorSetLayoutCreateFlagBits::eUpdateAfterBindPool,
-            l.count,
-            bindings.data(),
-            &flag_info
-        });
-        sets.at(set) = l.layout;
-    }
-    
-    // Create layout
-    pipeline_layout.layout = device.createPipelineLayout(vk::PipelineLayoutCreateInfo{
-        {},
-        sets,
-        push_constants
-    });
 
     return pipeline_layout;
 }

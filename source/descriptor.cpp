@@ -1,5 +1,6 @@
 #include "descriptor.hpp"
 #include "renderer.hpp"
+#include "pipelines.hpp"
 #include <vulkan/vulkan.hpp>
 
 void DescriptorSet::update(u32 binding, u32 array_element, const std::vector<DescriptorUpdate>& updates) {
@@ -65,8 +66,7 @@ DescriptorSet DescriptorAllocator::allocate(std::string_view label, const Descri
 
     if(!pools) {
         layouts.push_back(layout);
-        layouts.back().layout = create_layout(layout);
-        set_debug_name(device, layouts.back().layout, std::format("{}_layout", label));
+        build_layout(std::format("{}_layout", label), device, layouts.back());
         idx = this->pools.size();
         pools = &this->pools.emplace_back();
         pool = create_pool(layout, max_sets, *pools);
@@ -170,33 +170,4 @@ DescriptorPool* DescriptorAllocator::create_pool(const DescriptorLayout& layout,
         spdlog::error("Could not create descriptor pool: {}", err.what());
         return nullptr;
     }
-}
-
-vk::DescriptorSetLayout DescriptorAllocator::create_layout(const DescriptorLayout& layout) {
-    static constexpr vk::ShaderStageFlags ALL_STAGE_FLAGS = 
-        vk::ShaderStageFlagBits::eFragment | 
-        vk::ShaderStageFlagBits::eVertex |
-        vk::ShaderStageFlagBits::eCompute | 
-        vk::ShaderStageFlagBits::eGeometry;
-
-    auto& l = layout;
-    std::array<vk::DescriptorSetLayoutBinding, DescriptorLayout::MAX_BINDINGS> bindings{};
-    std::array<vk::DescriptorBindingFlags, DescriptorLayout::MAX_BINDINGS> flags{};
-
-    for(u32 b = 0; b < l.count; ++b) {
-        bindings.at(b) = {b, l.bindings.at(b).type, l.bindings.at(b).count, ALL_STAGE_FLAGS};
-        flags.at(b) = vk::DescriptorBindingFlagBits::eUpdateAfterBind | vk::DescriptorBindingFlagBits::ePartiallyBound;
-        if(l.variable_sized && b + 1u == l.count) { flags.at(b) |= vk::DescriptorBindingFlagBits::eVariableDescriptorCount; }
-    }
-
-    vk::DescriptorSetLayoutBindingFlagsCreateInfo flag_info{l.count, flags.data()};
-
-    auto vklayout = device.createDescriptorSetLayout(vk::DescriptorSetLayoutCreateInfo{
-        vk::DescriptorSetLayoutCreateFlagBits::eUpdateAfterBindPool,
-        l.count,
-        bindings.data(),
-        &flag_info
-    });
-    
-    return vklayout;
 }

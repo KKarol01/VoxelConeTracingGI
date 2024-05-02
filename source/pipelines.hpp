@@ -37,6 +37,7 @@ struct PipelineLayout {
 
     vk::PipelineLayout layout;
     std::array<DescriptorLayout, MAX_SETS> sets{};
+    vk::PushConstantRange push_constants{};
 };
 
 struct ShaderResources {
@@ -61,6 +62,9 @@ struct Pipeline {
     vk::Pipeline pipeline;
     PipelineLayout layout;
 };
+
+void build_layout(std::string_view label, vk::Device device, DescriptorLayout& layout);
+void build_layout(std::string_view label, vk::Device device, PipelineLayout& layout);
 
 class PipelineBuilder {
 public:
