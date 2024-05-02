@@ -1,6 +1,7 @@
 #pragma once
 #include "types.hpp"
 #include "renderer_types.hpp"
+#include "pipelines.hpp"
 #include "descriptor.hpp"
 #include "context.hpp"
 #include "scene.hpp"
@@ -93,31 +94,31 @@ inline vk::ImageAspectFlags deduce_vk_image_aspect(vk::Format format) {
 
 class RendererAllocator {
     struct UploadJob {
-        UploadJob(std::variant<Handle<TextureStorage>, Handle<GpuBuffer>> storage, std::span<const std::byte> data): storage(storage) {
+        UploadJob(std::variant<Handle<TextureAllocation>, Handle<BufferAllocation>> storage, std::span<const std::byte> data): storage(storage) {
             this->data.resize(data.size_bytes());
             std::memcpy(this->data.data(), data.data(), data.size_bytes());
         }
-        std::variant<Handle<TextureStorage>, Handle<GpuBuffer>> storage;
+        std::variant<Handle<TextureAllocation>, Handle<BufferAllocation>> storage;
         std::vector<std::byte> data;
     };
     
 public:
     explicit RendererAllocator(vk::Device device, VmaAllocator vma): device(device), vma(vma) {}
 
-    Handle<TextureStorage> create_texture_storage(std::string_view label, const vk::ImageCreateInfo& info, std::span<const std::byte> optional_data = {});
-    Handle<GpuBuffer> create_buffer(std::string_view label, vk::BufferUsageFlags usage, bool map_memory, u64 size_bytes);
-    Handle<GpuBuffer> create_buffer(std::string_view label, vk::BufferUsageFlags usage, bool map_memory, std::span<const std::byte> optional_data = {});
+    Handle<TextureAllocation> create_texture_storage(std::string_view label, const vk::ImageCreateInfo& info, std::span<const std::byte> optional_data = {});
+    Handle<BufferAllocation> create_buffer(std::string_view label, vk::BufferUsageFlags usage, bool map_memory, u64 size_bytes);
+    Handle<BufferAllocation> create_buffer(std::string_view label, vk::BufferUsageFlags usage, bool map_memory, std::span<const std::byte> optional_data = {});
 
-    void destroy_buffer(Handle<GpuBuffer> handle) {
+    void destroy_buffer(Handle<BufferAllocation> handle) {
         if(!handle) { return; }
         auto* ptr = find_with_handle(handle, buffers);
         if(!ptr) { return; }
         vmaDestroyBuffer(vma, ptr->buffer, ptr->alloc);
     }
 
-    TextureStorage& get_texture(Handle<TextureStorage> handle) { return *find_with_handle(handle, textures); }
-    GpuBuffer& get_buffer(Handle<GpuBuffer> handle) { return *find_with_handle(handle, buffers); }
-    const GpuBuffer& get_buffer(Handle<GpuBuffer> handle) const { return *find_with_handle(handle, buffers); }
+    TextureAllocation& get_texture(Handle<TextureAllocation> handle) { return *find_with_handle(handle, textures); }
+    BufferAllocation& get_buffer(Handle<BufferAllocation> handle) { return *find_with_handle(handle, buffers); }
+    const BufferAllocation& get_buffer(Handle<BufferAllocation> handle) const { return *find_with_handle(handle, buffers); }
 
     bool has_jobs() const { return !jobs.empty(); }
     void complete_jobs(vk::CommandBuffer cmd);
@@ -133,13 +134,13 @@ private:
         if(it == storage.end() || *it != handle) { return nullptr; }
         return &*it;
     }
-    GpuBuffer* create_buffer_ptr(std::string_view label, vk::BufferUsageFlags usage, bool map_memory, u64 size_bytes);
-    TextureStorage* create_texture_ptr(std::string_view label, const vk::ImageCreateInfo& info);
+    BufferAllocation* create_buffer_ptr(std::string_view label, vk::BufferUsageFlags usage, bool map_memory, u64 size_bytes);
+    TextureAllocation* create_texture_ptr(std::string_view label, const vk::ImageCreateInfo& info);
 
     vk::Device device;
     VmaAllocator vma;
-    std::vector<TextureStorage> textures;
-    std::vector<GpuBuffer> buffers;
+    std::vector<TextureAllocation> textures;
+    std::vector<BufferAllocation> buffers;
     std::vector<UploadJob> jobs;
 };
 
@@ -184,7 +185,7 @@ public:
         PFN_vkGetDeviceProcAddr get_device_proc_addr;
     } vulkan_function_pointers;
     
-    Handle<DescriptorSetAllocation> global_set, material_set;
+    DescriptorSet global_set, material_set;
     Texture3D voxel_albedo, voxel_normal, voxel_radiance;
     Texture2D depth_texture;
     Buffer global_buffer;
@@ -195,7 +196,7 @@ public:
     Pipeline pp_imgui;
     bool recompile_pipelines = false;
 
-    DescriptorSet* descriptor_set;
+    DescriptorAllocator* descriptor_allocator;
     RenderGraph* render_graph;
     RendererAllocator* allocator;
     GpuScene render_scene;

@@ -9,6 +9,8 @@
 #include <functional>
 #include <variant>
 
+struct Pipeline;
+
 #if 1
 enum class RGResourceType {
     None, Buffer, Texture
@@ -61,6 +63,9 @@ struct TextureInfo {
     RGImageLayout required_layout;
     RGImageFormat mutable_format{RGImageFormat::DeduceFromVkImage};
     TextureRange range;
+    vk::Filter min{vk::Filter::eLinear}, mag{vk::Filter::eLinear};
+    vk::SamplerMipmapMode mip{vk::SamplerMipmapMode::eLinear};
+    float min_lod{0.0f}, max_lod{1.0f};
 };
 
 struct RenderPass;
@@ -181,7 +186,7 @@ struct RenderPass {
 
     std::string name;
     Pipeline* pipeline{};
-    Handle<DescriptorSetAllocation> descriptor;
+    DescriptorSet descriptor;
     std::function<void(vk::CommandBuffer)> func;
     RenderPassRenderingExtent extent;
     std::vector<RPResource> resources;
@@ -193,7 +198,7 @@ struct RenderPass {
 class RenderGraph {
 public:
     RenderGraph() = default;
-    explicit RenderGraph(DescriptorSet* descriptor_buffer): descriptor_set(descriptor_buffer) {}
+    explicit RenderGraph(DescriptorAllocator* descriptor_allocator): descriptor_allocator(descriptor_allocator) {}
 
     RgResourceHandle add_resource(RGResource resource) {
         resources.push_back(std::move(resource));
@@ -231,7 +236,7 @@ private:
     void create_rendering_resources();
     BarrierStages deduce_stages_and_accesses(const RenderPass* src_pass, const RenderPass* dst_pass, const RPResource& src_resource, const RPResource& dst_resource, bool src_read, bool dst_read) const;
 
-    DescriptorSet* descriptor_set;
+    DescriptorAllocator* descriptor_allocator;
     std::vector<RGResource> resources;
     std::vector<RenderPass> renderpasses;
     std::vector<PassDependencies> stage_deps;

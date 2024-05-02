@@ -1,4 +1,5 @@
 #pragma once
+
 #include "renderer_types.hpp"
 #include <vector>
 #include <string_view>
@@ -6,22 +7,72 @@
 
 class Renderer;
 
-std::vector<u32> compile_glsl_to_spv(const std::filesystem::path& path);
-std::vector<ShaderResource> get_shader_resources(const std::vector<u32>& ir);
-Shader build_shader_from_spv(const std::vector<u32>& ir);
+struct DescriptorBinding {
+    u32 count;
+    vk::DescriptorType type;
+};
+
+struct DescriptorLayout {
+    static inline constexpr u32 MAX_BINDINGS = 32;
+
+    vk::DescriptorSetLayout layout;
+    std::array<DescriptorBinding, MAX_BINDINGS> bindings;
+    std::vector<std::string> names;
+    u32 count : 31{};
+    u32 variable_sized : 1{};
+};
+
+struct PipelineLayout {
+    inline static constexpr u32 MAX_SETS = 4u;
+
+    DescriptorBinding* find_binding(std::string_view name) {
+        for(auto& e : sets) { 
+            u32 i = 0;
+            for(u32 i=0; i<e.names.size(); ++i) { 
+                if(e.names.at(i) == name) { return &e.bindings.at(i); }
+            }
+        }
+        return nullptr;
+    }
+
+    vk::PipelineLayout layout;
+    std::array<DescriptorLayout, MAX_SETS> sets{};
+};
+
+struct ShaderResources {
+    struct NamedBinding {
+        std::string name;
+        u32 index;
+        DescriptorBinding binding;
+    };
+
+    std::array<std::vector<NamedBinding>, PipelineLayout::MAX_SETS> bindings{};
+};
+
+struct Shader {
+    Shader(vk::Device device, const std::filesystem::path& path);
+    
+    vk::ShaderModule module;
+    ShaderResources resources;
+};
+
+struct Pipeline {
+    vk::PipelineBindPoint type;
+    vk::Pipeline pipeline;
+    PipelineLayout layout;
+};
 
 class PipelineBuilder {
 public:
     PipelineBuilder(const Renderer* renderer): renderer(renderer) {}
 
-    PipelineBuilder& with_shaders(const std::vector<std::pair<vk::ShaderStageFlagBits, Shader*>>& shaders) {
+    PipelineBuilder& with_shaders(const std::vector<std::filesystem::path>& shaders) {
         this->shaders = shaders;        
         return *this;
     }
 
-    PipelineBuilder &with_vertex_input(
-        const std::vector<vk::VertexInputBindingDescription> &bindings,
-        const std::vector<vk::VertexInputAttributeDescription> &attributes) {
+    PipelineBuilder &with_vertex_input(const std::vector<vk::VertexInputBindingDescription> &bindings,
+                                       const std::vector<vk::VertexInputAttributeDescription> &attributes) {
         this->bindings = bindings;
         this->attributes = attributes;
         return *this;
@@ -51,14 +102,12 @@ public:
     }
 
     PipelineBuilder& with_push_constant(size_t offset, size_t size) {
-        push_constants
-            .setOffset(offset)
-            .setSize(size);
+        push_constants.setOffset(offset).setSize(size);
         return *this;
     }
 
-    PipelineBuilder& with_descriptor_set_layouts(const std::vector<vk::DescriptorSetLayout>& layouts) {
-        this->layouts = layouts;
+    PipelineBuilder& with_variable_upper_limits(std::array<u32, PipelineLayout::MAX_SETS> limits) {
+        variable_limits = limits;
         return *this;
     }
 
@@ -66,13 +115,13 @@ public:
     Pipeline build_compute(std::string_view label);
 
 private:
-    PipelineLayout coalesce_shader_resources_into_layout();
+    PipelineLayout coalesce_shader_resources_into_layout(const std::vector<Shader>& shaders);
 
     const Renderer* renderer;
-    std::vector<std::pair<vk::ShaderStageFlagBits, Shader*>> shaders;
+    std::vector<std::filesystem::path> shaders;
     std::vector<vk::VertexInputBindingDescription> bindings;
     std::vector<vk::VertexInputAttributeDescription> attributes;
-    std::vector<vk::DescriptorSetLayout> layouts;
+    std::array<u32, PipelineLayout::MAX_SETS> variable_limits;
     vk::CullModeFlagBits cull_mode{vk::CullModeFlagBits::eBack};
     vk::FrontFace front_face{vk::FrontFace::eCounterClockwise};
     bool depth_test{true};

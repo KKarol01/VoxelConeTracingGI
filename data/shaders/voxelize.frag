@@ -12,6 +12,9 @@ layout(location=0) in FS_IN {
 	vec3 position_proj;
 	vec3 normal;
 	vec3 color;
+	vec2 uv;
+	mat3 TBN;
+    flat uint instance_index;
 } frag;
 
 #include "global_set"
@@ -43,7 +46,7 @@ layout(location=0) in FS_IN {
 // layout(binding=1) uniform sampler2D tex_normal;
 layout(set=1, binding=0, r32ui) uniform coherent volatile uimage3D voxel_albedo;
 layout(set=1, binding=1, r32ui) uniform coherent volatile uimage3D voxel_normal;
-layout(set=1, binding=2) uniform sampler voxel_sampler;
+// layout(set=1, binding=2) uniform sampler voxel_sampler;
 
 // layout(set=2, binding=1) uniform sampler diff_samp;
 // layout(set=2, binding=2) uniform texture2D tex_diffuse;

@@ -4,8 +4,8 @@
 layout(location = 0) in vec3 position;
 layout(location = 1) in vec3 normal;
 layout(location = 2) in vec3 color;
-// layout(location = 3) in vec2 uv;
-// layout(location = 4) in vec3 tangent;
+layout(location = 3) in vec2 uv;
+layout(location = 4) in vec3 tangent;
 
 layout(set=0, binding=0) uniform GlobalUBO {
 	mat4 P;
@@ -22,19 +22,21 @@ layout(location = 0) out VS_OUT {
 	vec3 position_proj;
 	vec3 normal;
 	vec3 color;
-	// vec2 uv;
-	// mat3 TBN;
+	vec2 uv;
+	mat3 TBN;
+    flat uint instance_index;
 } vert;
 
 void main(){
 	// mat4 M = Models[gl_InstanceIndex];
 	vec4 pos = vec4(position, 1.0);
 	vert.position = pos.xyz;
-	// vert.uv = uv;
+	vert.uv = uv;
 	vert.normal = normal;
 	vert.color = color;
-	// vec3 _tang = vec3((M * vec4(tangent,0.0)));
-	// vert.TBN = mat3(_tang, cross(normal, _tang), normal);
+	vec3 _tang = vec3((vec4(tangent,0.0)));
+	vert.TBN = mat3(_tang, cross(normal, _tang), normal);
+    vert.instance_index = gl_InstanceIndex;
 
 	vert.position_proj = pos.xyz;
 	gl_Position = pos;

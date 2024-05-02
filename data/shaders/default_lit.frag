@@ -12,6 +12,9 @@ layout(location=0) in FS_IN {
     vec3 frag_normal;
     vec3 frag_color;
     vec2 frag_uv;
+    vec3 frag_tan;
+    vec3 frag_bitan;
+    mat3 frag_tbn;
     flat int frag_instance_index;
 };
 
@@ -249,12 +252,15 @@ layout(location=0) in FS_IN {
 
 void main() {
     // vec3 position = frag_pos;
-    // vec3 normal = frag_normal;
     vec3 albedo = frag_color;
+    vec3 normal = frag_normal;
     Material mat = materials[frag_instance_index];
     if(mat.diffuse_idx >= 0) {
-        albedo = texture(sampler2D(material_textures[nonuniformEXT(mat.diffuse_idx)], material_sampler), frag_uv).rgb;
+        albedo = texture(material_textures[nonuniformEXT(mat.diffuse_idx)], frag_uv).rgb;
+        normal = texture(material_textures[nonuniformEXT(mat.normal_idx)], frag_uv).rgb;
+        normal = normalize(frag_tbn * (normal * 2.0 - 1.0));
     }
+
     // vec3 normal = texture(sampler2D(tex_normal, sampler1), frag_uv).rgb;
     // normal = normal*2.0 - 1.0;
     // normal = normalize(frag_TBN * normal);

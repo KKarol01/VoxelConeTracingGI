@@ -4,7 +4,6 @@ VULKAN_HPP_DEFAULT_DISPATCH_LOADER_DYNAMIC_STORAGE
 #include "input.hpp"
 #include "pipelines.hpp"
 #include "render_graph.hpp"
-#include "descriptor.hpp"
 #include <spdlog/spdlog.h>
 #include <glm/gtc/matrix_transform.hpp>
 #include <VkBootstrap.h>
@@ -18,7 +17,7 @@ void GpuScene::render(vk::CommandBuffer cmd) {
     cmd.drawIndexedIndirect(indirect_commands_buffer.buffer, 0, draw_count, sizeof(vk::DrawIndexedIndirectCommand));
 }
 
-Handle<TextureStorage> RendererAllocator::create_texture_storage(std::string_view label, const vk::ImageCreateInfo& info, std::span<const std::byte> optional_data) {
+Handle<TextureAllocation> RendererAllocator::create_texture_storage(std::string_view label, const vk::ImageCreateInfo& info, std::span<const std::byte> optional_data) {
     auto* texture = create_texture_ptr(label, info);
     if(!texture) { return {}; }
 
@@ -28,7 +27,7 @@ Handle<TextureStorage> RendererAllocator::create_texture_storage(std::string_vie
     return *texture;
 }
 
-Handle<GpuBuffer> RendererAllocator::create_buffer(std::string_view label, vk::BufferUsageFlags usage, bool map_memory, u64 size_bytes) {
+Handle<BufferAllocation> RendererAllocator::create_buffer(std::string_view label, vk::BufferUsageFlags usage, bool map_memory, u64 size_bytes) {
     if(size_bytes == 0ull) { 
         spdlog::warn("Requested buffer ({}) size is 0. This is probably a bug.", label);
         return {};
@@ -39,7 +38,7 @@ Handle<GpuBuffer> RendererAllocator::create_buffer(std::string_view label, vk::B
     return *buffer;
 }
 
-Handle<GpuBuffer> RendererAllocator::create_buffer(std::string_view label, vk::BufferUsageFlags usage, bool map_memory, std::span<const std::byte> optional_data) {
+Handle<BufferAllocation> RendererAllocator::create_buffer(std::string_view label, vk::BufferUsageFlags usage, bool map_memory, std::span<const std::byte> optional_data) {
     if(optional_data.size_bytes() == 0) { 
         spdlog::warn("Requested buffer ({}) size is 0. This is probably a bug.", label);
         return {};
@@ -79,7 +78,7 @@ void RendererAllocator::complete_jobs(vk::CommandBuffer cmd) {
 
     u64 offset = 0ull;
     for(auto& job : jobs) {
-        if(auto* handle = std::get_if<Handle<TextureStorage>>(&job.storage)) {
+        if(auto* handle = std::get_if<Handle<TextureAllocation>>(&job.storage)) {
             auto& texture = get_texture(*handle);
 
             vk::ImageMemoryBarrier2 barrier{
@@ -180,7 +179,7 @@ void RendererAllocator::complete_jobs(vk::CommandBuffer cmd) {
             }
 
             texture.current_layout = vk::ImageLayout::eShaderReadOnlyOptimal;
-        } else if(auto* handle = std::get_if<Handle<GpuBuffer>>(&job.storage)) {
+        } else if(auto* handle = std::get_if<Handle<BufferAllocation>>(&job.storage)) {
             const auto copy_region = vk::BufferCopy2{offset, 0, job.data.size()};
             cmd.copyBuffer2(vk::CopyBufferInfo2{
                 staging_buffer.buffer,
@@ -192,7 +191,7 @@ void RendererAllocator::complete_jobs(vk::CommandBuffer cmd) {
         offset += job.data.size();
     }
 
-    get_context().renderer->deletion_queue.push_back([this, vma = this->vma, buffer = staging_buffer.storage.handle] {
+    get_context().renderer->deletion_queue.push_back([this, vma = this->vma, buffer = staging_buffer.allocation.handle] {
         auto it = std::lower_bound(buffers.begin(), buffers.end(), buffer);
         if(it == buffers.end()) { return; }
         vmaDestroyBuffer(vma, it->buffer, it->alloc);
@@ -201,7 +200,7 @@ void RendererAllocator::complete_jobs(vk::CommandBuffer cmd) {
     jobs.clear();
 }
 
-GpuBuffer* RendererAllocator::create_buffer_ptr(std::string_view label, vk::BufferUsageFlags usage, bool map_memory, u64 size_bytes) {
+BufferAllocation* RendererAllocator::create_buffer_ptr(std::string_view label, vk::BufferUsageFlags usage, bool map_memory, u64 size_bytes) {
     if(!map_memory) {
         usage |= vk::BufferUsageFlagBits::eTransferDst;
     }
@@ -225,6 +224,7 @@ GpuBuffer* RendererAllocator::create_buffer_ptr(std::string_view label, vk::Buff
 
     auto& b = buffers.emplace_back(
         buffer,
+        usage,
         alloc_i.pMappedData,
         size_bytes,
         alloc
@@ -235,7 +235,7 @@ GpuBuffer* RendererAllocator::create_buffer_ptr(std::string_view label, vk::Buff
     return &b;
 }
 
-TextureStorage* RendererAllocator::create_texture_ptr(std::string_view label, const vk::ImageCreateInfo& info) {
+TextureAllocation* RendererAllocator::create_texture_ptr(std::string_view label, const vk::ImageCreateInfo& info) {
     VmaAllocationCreateInfo alloc_info = {};
     alloc_info.usage = VMA_MEMORY_USAGE_AUTO;
     
@@ -274,22 +274,22 @@ TextureStorage* RendererAllocator::create_texture_ptr(std::string_view label, co
 }
 
 Buffer::Buffer(std::string_view label, vk::BufferUsageFlags usage, bool map_memory, u64 size)
-    : storage(get_context().renderer->allocator->create_buffer(label, usage, map_memory, size)) { 
+    : allocation(get_context().renderer->allocator->create_buffer(label, usage, map_memory, size)) { 
     buffer = Buffer::operator->()->buffer;
 }
 
 Buffer::Buffer(std::string_view label, vk::BufferUsageFlags usage, bool map_memory, std::span<const std::byte> optional_data)
-    : storage(get_context().renderer->allocator->create_buffer(label, usage, map_memory, optional_data)) { 
+    : allocation(get_context().renderer->allocator->create_buffer(label, usage, map_memory, optional_data)) { 
     buffer = Buffer::operator->()->buffer;
 }
 
-GpuBuffer* Buffer::operator->() { return &get_context().renderer->allocator->get_buffer(storage); }
+BufferAllocation* Buffer::operator->() { return &get_context().renderer->allocator->get_buffer(allocation); }
 
-const GpuBuffer* Buffer::operator->() const { return &get_context().renderer->allocator->get_buffer(storage); }
+const BufferAllocation* Buffer::operator->() const { return &get_context().renderer->allocator->get_buffer(allocation); }
 
-TextureStorage* Texture::operator->() { return &get_context().renderer->allocator->get_texture(storage); }
+TextureAllocation* Texture::operator->() { return &get_context().renderer->allocator->get_texture(storage); }
 
-const TextureStorage* Texture::operator->() const { return &get_context().renderer->allocator->get_texture(storage); }
+const TextureAllocation* Texture::operator->() const { return &get_context().renderer->allocator->get_texture(storage); }
 
 Texture2D::Texture2D(std::string_view label, u32 width, u32 height, vk::Format format, u32 mips, vk::ImageUsageFlags usage, std::span<const std::byte> optional_data) 
     : Texture(get_context().renderer->allocator->create_texture_storage(
@@ -364,8 +364,8 @@ void Renderer::setup_scene() {
     auto& context = get_context();
     auto& scene = *context.scene;
 
-    std::unordered_map<const TextureStorage*, u64> texture_indices;
-    std::vector<const TextureStorage*> material_textures{}; // index 0 reserved for lack of texture
+    std::unordered_map<const TextureAllocation*, u64> texture_indices;
+    std::vector<const TextureAllocation*> material_textures{}; // index 0 reserved for lack of texture
     material_textures.reserve(scene.material_textures.size());
     std::vector<GpuInstancedMesh> instanced_meshes;
 
@@ -479,13 +479,6 @@ void Renderer::setup_scene() {
         });
     }
 
-    for(auto& e : indirect_commands) {
-        spdlog::debug("Indirect command: {} {}", e.firstInstance, e.instanceCount);
-    }
-    for(auto& e : instanced_meshes) {
-        spdlog::debug("diff idx {}, norm idx {}", e.diffuse_texture_idx, e.normal_texture_idx);
-    }
-
     render_scene.vertex_buffer = Buffer{"scene_vertex_buffer", vk::BufferUsageFlagBits::eVertexBuffer, false, std::as_bytes(std::span{vertices})};
     render_scene.index_buffer = Buffer{"scene_index_buffer", vk::BufferUsageFlagBits::eIndexBuffer, false, std::as_bytes(std::span{indices})};
     render_scene.instance_buffer = Buffer{"scene_instance_buffer", vk::BufferUsageFlagBits::eStorageBuffer, true, std::as_bytes(std::span{instanced_meshes})};
@@ -496,23 +489,22 @@ void Renderer::setup_scene() {
         {}, vk::Filter::eLinear, vk::Filter::eLinear, vk::SamplerMipmapMode::eLinear, vk::SamplerAddressMode::eRepeat, vk::SamplerAddressMode::eRepeat, vk::SamplerAddressMode::eRepeat,
         {}, false, {}, false, {}, 0, 11.0f
     });
-    descriptor_set->write_descriptor(material_set, 0, DescriptorSetUpdate{
-        DescriptorType::StorageBuffer, std::make_pair(render_scene.instance_buffer.storage, render_scene.instance_buffer->size)
-    });
-    descriptor_set->write_descriptor(material_set, 1, DescriptorSetUpdate{
-        DescriptorType::Sampler, sampler
-    });
-    // material_descriptor_buffer->allocate_descriptor(material_set, 2, DescriptorSetUpdate{
-    //     DescriptorType::SampledImage, std::make_pair(material_textures.back()->default_view, vk::ImageLayout::eShaderReadOnlyOptimal)
-    // });
+
+    std::vector<DescriptorUpdate> updates;
+    updates.reserve(material_textures.size() + 1u);
+
+    updates.emplace_back(&render_scene.instance_buffer);
     for(auto& e : material_textures) {
         if(!e) { continue; }
-
-        descriptor_set->write_descriptor(material_set, 2, DescriptorSetUpdate{
-            DescriptorType::SampledImage, std::make_pair(e->default_view, vk::ImageLayout::eShaderReadOnlyOptimal)
-        });
+        updates.emplace_back(std::make_tuple(e->default_view, vk::ImageLayout::eShaderReadOnlyOptimal, sampler));
     }
 
+    material_set = descriptor_allocator->allocate("material_set", DescriptorLayout{{}, {
+        DescriptorBinding{1, vk::DescriptorType::eStorageBuffer},
+        DescriptorBinding{128, vk::DescriptorType::eCombinedImageSampler},
+    }, {}, 2, true}, 4, material_textures.size());
+
+    material_set.update(0, 0, updates);
 }
 
 void Renderer::render() { 
@@ -548,8 +540,8 @@ void Renderer::render() {
     cmd.bindIndexBuffer(render_scene.index_buffer->buffer, 0, vk::IndexType::eUint32);
 
     vk::DescriptorSet sets[] {
-        descriptor_set->get_set(global_set),
-        descriptor_set->get_set(material_set),
+        global_set.set,
+        material_set.set,
     };
     cmd.bindDescriptorSets(vk::PipelineBindPoint::eGraphics, pp_default_lit.layout.layout, 0, sets, {});
 
@@ -734,19 +726,10 @@ bool Renderer::initialize_frame_resources() {
         set_debug_name(device, frames.at(i).in_flight_fence, std::format("frame_in_flight_fence_{}", i));
     }
 
-    descriptor_set = new DescriptorSet{device};
-    auto layouts = descriptor_set->push_layouts({
-        {"global_set_layout", {
-            {DescriptorType::UniformBuffer, 1}
-        }},
-        {"material_set_layout", {
-            {DescriptorType::StorageBuffer, 1},
-            {DescriptorType::Sampler, 1},
-            {DescriptorType::SampledImage, 512, true}
-        }}
-    });
-    global_set = layouts.at(0);
-    material_set = layouts.at(1);
+    descriptor_allocator = new DescriptorAllocator{device};
+    global_set = descriptor_allocator->allocate("global_set", DescriptorLayout{{}, {
+        DescriptorBinding{1, vk::DescriptorType::eUniformBuffer}
+    }, {}, 1, false}, 2);
 
     return true;
 }
@@ -793,37 +776,8 @@ bool Renderer::initialize_imgui() {
 }
 
 bool Renderer::initialize_render_passes() {
-    render_graph = new RenderGraph{};
+    render_graph = new RenderGraph{descriptor_allocator};
     
-    std::vector<std::filesystem::path> shader_paths{
-        "default_lit.vert",
-        "default_lit.frag",
-        "voxelize.vert",
-        "voxelize.geom",
-        "voxelize.frag",
-        "merge_voxels.comp",
-        "imgui.vert",
-        "imgui.frag",
-    };
-    std::vector<std::vector<u32>> irs(shader_paths.size()); 
-    std::vector<std::vector<ShaderResource>> shader_resources(shader_paths.size());
-    #pragma omp parallel for
-    for(u32 i=0; i<irs.size(); ++i) {
-        irs.at(i) = compile_glsl_to_spv(shader_paths.at(i));
-        shader_resources.at(i) = get_shader_resources(irs.at(i));
-    }
-    
-    std::vector<Shader> shaders(irs.size());
-    for(u32 i=0; i<irs.size(); ++i) {
-        auto& ir = irs.at(i);
-        shaders.at(i) = Shader{
-            .path = shader_paths.at(i).string(),
-            .module = device.createShaderModule(vk::ShaderModuleCreateInfo{{}, ir.size() * sizeof(u32), ir.data()}),
-            .resources = shader_resources.at(i)
-        };
-        set_debug_name(device, shaders.at(i).module, shader_paths.at(i).string());
-    }
-
     voxel_albedo = Texture3D{"voxel_albedo", 256, 256, 256, vk::Format::eR32Uint, 1, vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eTransferSrc | vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled};
     voxel_normal = Texture3D{"voxel_normal", 256, 256, 256, vk::Format::eR32Uint, 1, vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eTransferSrc | vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled};
     voxel_radiance = Texture3D{"voxel_radiance", 256, 256, 256, vk::Format::eR8G8B8A8Unorm, (u32)std::log2f(256.0f)+1, vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eTransferSrc | vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled};
@@ -840,71 +794,66 @@ bool Renderer::initialize_render_passes() {
                 vk::VertexInputAttributeDescription{1, 0, vk::Format::eR32G32B32Sfloat, 12},
                 vk::VertexInputAttributeDescription{2, 0, vk::Format::eR32G32B32Sfloat, 24},
                 vk::VertexInputAttributeDescription{3, 0, vk::Format::eR32G32Sfloat, 36},
+                vk::VertexInputAttributeDescription{4, 0, vk::Format::eR32G32B32Sfloat, 44},
             })
         .with_depth_testing(true, true, vk::CompareOp::eLess)
         .with_culling(vk::CullModeFlagBits::eBack, vk::FrontFace::eCounterClockwise)
-        .with_shaders({
-            {vk::ShaderStageFlagBits::eVertex, &shaders.at(0)},
-            {vk::ShaderStageFlagBits::eFragment, &shaders.at(1)},
-        })
-        .with_descriptor_set_layouts({
-            descriptor_set->get_layout(global_set),
-            descriptor_set->get_layout(material_set),
-        })
+        .with_shaders({"default_lit.vert", "default_lit.frag"})
         .with_color_attachments({swapchain_format})
         .with_depth_attachment(vk::Format::eD32Sfloat)
+        .with_variable_upper_limits({128})
         .build_graphics("default_lit_pipeline");
 
-    PipelineBuilder voxelize_builder{this};
-    pp_voxelize = voxelize_builder
-        .with_vertex_input(
-            {
-                vk::VertexInputBindingDescription{0, sizeof(Vertex), vk::VertexInputRate::eVertex}
-            },
-            {
-                vk::VertexInputAttributeDescription{0, 0, vk::Format::eR32G32B32Sfloat, 0},
-                vk::VertexInputAttributeDescription{1, 0, vk::Format::eR32G32B32Sfloat, 12},
-                vk::VertexInputAttributeDescription{2, 0, vk::Format::eR32G32B32Sfloat, 24},
-            })
-        .with_depth_testing(false, false, vk::CompareOp::eAlways)
-        .with_culling(vk::CullModeFlagBits::eNone, vk::FrontFace::eCounterClockwise)
-        .with_shaders({
-            {vk::ShaderStageFlagBits::eVertex, &shaders.at(2)},
-            {vk::ShaderStageFlagBits::eGeometry, &shaders.at(3)},
-            {vk::ShaderStageFlagBits::eFragment, &shaders.at(4)},
-        })
-        .build_graphics("voxelize_pipeline");
+    // PipelineBuilder voxelize_builder{this};
+    // pp_voxelize = voxelize_builder
+    //     .with_vertex_input(
+    //         {
+    //             vk::VertexInputBindingDescription{0, sizeof(Vertex), vk::VertexInputRate::eVertex}
+    //         },
+    //         {
+    //             vk::VertexInputAttributeDescription{0, 0, vk::Format::eR32G32B32Sfloat, 0},
+    //             vk::VertexInputAttributeDescription{1, 0, vk::Format::eR32G32B32Sfloat, 12},
+    //             vk::VertexInputAttributeDescription{2, 0, vk::Format::eR32G32B32Sfloat, 24},
+    //             vk::VertexInputAttributeDescription{3, 0, vk::Format::eR32G32Sfloat, 36},
+    //             vk::VertexInputAttributeDescription{4, 0, vk::Format::eR32G32B32Sfloat, 44},
+    //         })
+    //     .with_depth_testing(false, false, vk::CompareOp::eAlways)
+    //     .with_culling(vk::CullModeFlagBits::eNone, vk::FrontFace::eCounterClockwise)
+    //     .with_shaders({
+    //         {vk::ShaderStageFlagBits::eVertex, &shaders.at(2)},
+    //         {vk::ShaderStageFlagBits::eGeometry, &shaders.at(3)},
+    //         {vk::ShaderStageFlagBits::eFragment, &shaders.at(4)},
+    //     })
+    //     .build_graphics("voxelize_pipeline");
 
-    PipelineBuilder merge_voxels_builder{this};
-    pp_merge_voxels = merge_voxels_builder
-        .with_shaders({
-            {vk::ShaderStageFlagBits::eCompute, &shaders.at(5)},
-        })
-        .build_compute("merge_voxels_pipeline");
+    // PipelineBuilder merge_voxels_builder{this};
+    // pp_merge_voxels = merge_voxels_builder
+    //     .with_shaders({
+    //         {vk::ShaderStageFlagBits::eCompute, &shaders.at(5)},
+    //     })
+    //     .build_compute("merge_voxels_pipeline");
 
-    PipelineBuilder imgui_builder{this};
-    pp_imgui = imgui_builder
-        .with_vertex_input(
-            {
-                vk::VertexInputBindingDescription{0, sizeof(Vertex), vk::VertexInputRate::eVertex}
-            },
-            {
-                vk::VertexInputAttributeDescription{0, 0, vk::Format::eR32G32Sfloat, 0},
-                vk::VertexInputAttributeDescription{1, 0, vk::Format::eR32G32Sfloat, 8},
-                vk::VertexInputAttributeDescription{2, 0, vk::Format::eR32G32B32A32Sfloat, 16},
-            })
-        .with_shaders({
-            {vk::ShaderStageFlagBits::eVertex, &shaders.at(6)},
-            {vk::ShaderStageFlagBits::eFragment, &shaders.at(7)},
-        })
-        .with_push_constant(0, 16u)
-        .build_graphics("imgui_pipeline");
+    // PipelineBuilder imgui_builder{this};
+    // pp_imgui = imgui_builder
+    //     .with_vertex_input(
+    //         {
+    //             vk::VertexInputBindingDescription{0, sizeof(Vertex), vk::VertexInputRate::eVertex}
+    //         },
+    //         {
+    //             vk::VertexInputAttributeDescription{0, 0, vk::Format::eR32G32Sfloat, 0},
+    //             vk::VertexInputAttributeDescription{1, 0, vk::Format::eR32G32Sfloat, 8},
+    //             vk::VertexInputAttributeDescription{2, 0, vk::Format::eR32G32B32A32Sfloat, 16},
+    //         })
+    //     .with_shaders({
+    //         {vk::ShaderStageFlagBits::eVertex, &shaders.at(6)},
+    //         {vk::ShaderStageFlagBits::eFragment, &shaders.at(7)},
+    //     })
+    //     .with_push_constant(0, 16u)
+    //     .build_graphics("imgui_pipeline");
 
     glm::mat4 global_buffer_size[2];
     global_buffer = Buffer{"global_ubo", vk::BufferUsageFlagBits::eUniformBuffer, true, std::as_bytes(std::span{global_buffer_size})};
-    descriptor_set->write_descriptor(global_set, 0, DescriptorSetUpdate{
-        DescriptorType::UniformBuffer, std::make_tuple(global_buffer.storage, sizeof(global_buffer_size))
-    });
+    global_set.update(0, 0, {{&global_buffer}});
 
     #if 1
     const auto res_voxel_albedo = render_graph->add_resource(RGResource{"voxel_albedo", voxel_albedo});
@@ -959,9 +908,7 @@ bool Renderer::initialize_render_passes() {
             }
         })
         .set_draw_func([this](vk::CommandBuffer cmd) {
-            for(auto& gpum : render_scene.models) {
-                // cmd.drawIndexed(gpum.index_count, 1, gpum.index_offset, gpum.vertex_offset, 0);
-            }
+            render_scene.render(cmd);
         });
     // render_graph->add_render_pass(pass_voxelization);
 

@@ -1,7 +1,7 @@
 project(vxgi)
 
 add_custom_target(copy_data ALL 
-    COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/data ${CMAKE_CURRENT_BINARY_DIR}/data
+    COMMAND ${CMAKE_COMMAND} -E copy_directory ${CMAKE_SOURCE_DIR}/data/shaders ${CMAKE_CURRENT_BINARY_DIR}/data/shaders
 )
 
 add_executable(vxgi
@@ -49,6 +49,7 @@ target_include_directories(vxgi
     PUBLIC
         $ENV{VULKAN_SDK}/include
         ${CMAKE_SOURCE_DIR}/third_party
+        ${CMAKE_SOURCE_DIR}/third_party/taskflow
 )
 
 target_link_directories(vxgi

@@ -5,104 +5,30 @@
 #include <spirv_cross/spirv_cross.hpp>
 #include <stb/stb_include.h>
 
-static char* read_shader_file(const std::filesystem::path& path) {
-    static std::filesystem::path shader_path = "data/shaders";
-    char error[256] = {};
-    auto full_path = shader_path / path;
-    auto path_str = full_path.string();
-    auto parent_path_str = shader_path.string();
-    auto file = stb_include_file((char*) path_str.c_str(), 0, (char*)parent_path_str.c_str(), error);
+static char* read_shader_file(const std::filesystem::path& path);
+static vk::ShaderStageFlagBits deduce_shader_type(const std::filesystem::path& path);
+static shaderc_shader_kind to_shaderc_type(vk::ShaderStageFlagBits stage);
+static std::vector<u32> compile_glsl_to_spv(const std::filesystem::path& path);
+static ShaderResources get_shader_resources(const std::vector<u32>& ir);
 
-    if(error[0] != 0) {
-        spdlog::error("stb_include: Error {}", error);
-    }
+Shader::Shader(vk::Device device, const std::filesystem::path& path) {
+    const auto code = compile_glsl_to_spv(path);
 
-    return file;
-}
-
-std::vector<u32> compile_glsl_to_spv(const std::filesystem::path& path) {
-    auto file = read_shader_file(path);
-    shaderc::Compiler compiler;
-    auto result = compiler.CompileGlslToSpv(file, shaderc_glsl_infer_from_source, path.filename().string().c_str());
-    if(result.GetCompilationStatus() != shaderc_compilation_status_success) {
-        spdlog::error("Shader {} compilation error: {}", path.filename().string(), result.GetErrorMessage().c_str());
-        return {};
-    }
-    free(file);
-
-    return std::vector<u32>{result.begin(), result.end()};
-}
-
-std::vector<ShaderResource> get_shader_resources(const std::vector<u32>& ir) {
-    spirv_cross::Compiler compiler{ir}; 
-    const auto& resources = compiler.get_shader_resources();
-
-    const spirv_cross::SmallVector<spirv_cross::Resource>* resources_list[] {
-        &resources.separate_images,
-        &resources.storage_images,
-        &resources.separate_samplers,
-        &resources.uniform_buffers,
-        &resources.storage_buffers,
-        &resources.sampled_images
-    };
-    DescriptorType resource_types[] {
-        DescriptorType::SampledImage,
-        DescriptorType::StorageImage,
-        DescriptorType::Sampler,
-        DescriptorType::UniformBuffer,
-        DescriptorType::StorageBuffer,
-        DescriptorType::CombinedImageSampler
-    };
-
-    std::vector<ShaderResource> shader_resources;
-    for(u32 i=0; i<sizeof(resources_list)/sizeof(resources_list[0]); ++i) {
-        auto* res = resources_list[i];
-        auto res_type = resource_types[i];
-
-        for(const auto& r : *res) {
-            // const auto& type = compiler.get_type(r.base_type_id); // for later use
-            const auto set = compiler.get_decoration(r.id, spv::Decoration::DecorationDescriptorSet);
-            const auto binding = compiler.get_decoration(r.id, spv::Decoration::DecorationBinding);
-            const auto& type = compiler.get_type(r.base_type_id);
-            const auto is_struct = type.basetype == spirv_cross::SPIRType::Struct;
-            const auto count = [is_struct, &r, &compiler, &type] {
-                if(is_struct && type.member_types.empty()) { return false; }
-
-                const auto& last_type = is_struct ? compiler.get_type(type.member_types.back()) : type;
-                
-                if(last_type.array.empty()) { return false; }
-                if(last_type.array.size() > 1u) { return false; }
-                if(last_type.array_size_literal[0] == false) {
-                    spdlog::error("SPIRV_CROSS array size literal at index 0 is false.");
-                    std::terminate();
-                }
-                return last_type.array[0] == 0u;
-            }();
-
-            shader_resources.push_back(ShaderResource{
-                .descriptor_set = set,
-                .resource = {
-                    .name = r.name,
-                    .type = res_type,
-                    .binding = binding,
-                    // .count = count
-                }
-            });
-        }
-    }
-
-    std::sort(begin(shader_resources), end(shader_resources), [](auto&& a, auto&& b) {
-        if(a.descriptor_set != b.descriptor_set) { return a.descriptor_set < b.descriptor_set; }
-        return a.resource.binding < b.resource.binding;
+    module = device.createShaderModule(vk::ShaderModuleCreateInfo{
+        {}, code.size() * sizeof(code[0]), code.data()
     });
 
-    return shader_resources;
+    set_debug_name(device, module, path.string());
+
+    resources = get_shader_resources(code);
 }
 
 Pipeline PipelineBuilder::build_graphics(std::string_view label) {
     std::vector<vk::PipelineShaderStageCreateInfo> stages;
-    for(const auto& shader : shaders) { 
-        stages.push_back(vk::PipelineShaderStageCreateInfo{{}, shader.first, shader.second->module, "main"}); 
+    std::vector<Shader> compiled_shaders;
+    for(const auto& sh_path : shaders) { 
+        auto& shader = compiled_shaders.emplace_back(renderer->device, sh_path);
+        stages.push_back(vk::PipelineShaderStageCreateInfo{{}, deduce_shader_type(sh_path), shader.module, "main"}); 
     }
 
     vk::PipelineVertexInputStateCreateInfo   VertexInputState_   = {
@@ -176,7 +102,7 @@ Pipeline PipelineBuilder::build_graphics(std::string_view label) {
         {}, DynamicStates            
     };
 
-    PipelineLayout layout = coalesce_shader_resources_into_layout();
+    PipelineLayout layout = coalesce_shader_resources_into_layout(compiled_shaders);
     set_debug_name(renderer->device, layout.layout, std::format("{}_layout", label));
 
     vk::PipelineRenderingCreateInfo dynamic_rendering = {
@@ -212,20 +138,25 @@ Pipeline PipelineBuilder::build_graphics(std::string_view label) {
     set_debug_name(renderer->device, pipeline, label);
 
     return Pipeline{
+        .type = vk::PipelineBindPoint::eGraphics,
         .pipeline = pipeline,
         .layout = layout,
-        .type = PipelineType::Graphics
     };
 } 
 
 Pipeline PipelineBuilder::build_compute(std::string_view label) {
-    PipelineLayout layout = coalesce_shader_resources_into_layout();
+    Shader compute_shader{renderer->device, shaders.at(0)};
+
+    PipelineLayout layout = coalesce_shader_resources_into_layout({compute_shader});
     set_debug_name(renderer->device, layout.layout, std::format("{}_layout", label));
-    
+
+    const auto type = deduce_shader_type(shaders.at(0));
+    assert("Shader type must be compute" && type == vk::ShaderStageFlagBits::eVertex);
+
     vk::ComputePipelineCreateInfo info{
         {},
         vk::PipelineShaderStageCreateInfo{
-            {}, shaders.at(0).first, shaders.at(0).second->module, "main"
+            {}, type, compute_shader.module, "main"
         },
         layout.layout
     };
@@ -234,71 +165,198 @@ Pipeline PipelineBuilder::build_compute(std::string_view label) {
     set_debug_name(renderer->device, pipeline, label);
 
     return Pipeline{
+        .type = vk::PipelineBindPoint::eCompute,
         .pipeline = pipeline,
         .layout = layout,
-        .type = PipelineType::Compute
     };
 }
 
-PipelineLayout PipelineBuilder::coalesce_shader_resources_into_layout() {
-    PipelineLayout layout;
+PipelineLayout PipelineBuilder::coalesce_shader_resources_into_layout(const std::vector<Shader>& shaders) {
+    auto device = renderer->device;
+    PipelineLayout pipeline_layout{};
 
-    if(!this->layouts.empty()) {
-        return PipelineLayout{get_context().renderer->device.createPipelineLayout(vk::PipelineLayoutCreateInfo{
-            {}, layouts, {}
-        }), {}};
-    }
-    
-    std::vector<std::vector<vk::DescriptorSetLayoutBinding>> layout_bindings(PipelineLayout::MAX_DESCRIPTOR_SET_COUNT);
     static constexpr vk::ShaderStageFlags ALL_STAGE_FLAGS = 
         vk::ShaderStageFlagBits::eFragment | 
         vk::ShaderStageFlagBits::eVertex |
         vk::ShaderStageFlagBits::eCompute | 
         vk::ShaderStageFlagBits::eGeometry;
 
-    const auto get_set_bindings = [&layout](u32 set) -> auto& {
-        return layout.descriptor_sets.at(set).bindings;
+    // Merge shaders's descriptor layouts
+    for(const auto& s : shaders) {
+        u32 variable_binding_counter = 0;
+        for(u32 set = 0; set<s.resources.bindings.size(); ++set) {
+            const auto& rs = s.resources.bindings.at(set);
+            auto& layout = pipeline_layout.sets.at(set);
+            layout.names.resize(rs.size());
+
+            for(u32 binding = 0; binding < rs.size(); ++binding) {
+                const auto& r = rs.at(binding);
+                layout.bindings.at(binding) = r.binding;
+                layout.names.at(binding) = r.name;
+
+                if(binding == rs.size() - 1u && r.binding.count == 0) {
+                    layout.variable_sized = true;
+                    layout.bindings.at(binding).count = variable_limits.at(variable_binding_counter);
+                    variable_binding_counter++;
+                }
+            } 
+
+            layout.count = std::max(layout.count, (u32)rs.size());
+        }
+    }
+
+    // Create descriptor layouts after merging
+    std::array<vk::DescriptorSetLayout, PipelineLayout::MAX_SETS> sets{};
+    for(u32 set = 0; set < pipeline_layout.sets.size(); ++set) {
+        auto& l = pipeline_layout.sets.at(set);
+        std::array<vk::DescriptorSetLayoutBinding, DescriptorLayout::MAX_BINDINGS> bindings{};
+        std::array<vk::DescriptorBindingFlags, DescriptorLayout::MAX_BINDINGS> flags{};
+
+        for(u32 b = 0; b < l.count; ++b) {
+            bindings.at(b) = {b, l.bindings.at(b).type, l.bindings.at(b).count, ALL_STAGE_FLAGS};
+            flags.at(b) = vk::DescriptorBindingFlagBits::eUpdateAfterBind | vk::DescriptorBindingFlagBits::ePartiallyBound;
+            if(l.variable_sized && b + 1u == l.count) { flags.at(b) |= vk::DescriptorBindingFlagBits::eVariableDescriptorCount; }
+        }
+
+        vk::DescriptorSetLayoutBindingFlagsCreateInfo flag_info{l.count, flags.data()};
+
+        l.layout = device.createDescriptorSetLayout(vk::DescriptorSetLayoutCreateInfo{
+            vk::DescriptorSetLayoutCreateFlagBits::eUpdateAfterBindPool,
+            l.count,
+            bindings.data(),
+            &flag_info
+        });
+        sets.at(set) = l.layout;
+    }
+    
+    // Create layout
+    pipeline_layout.layout = device.createPipelineLayout(vk::PipelineLayoutCreateInfo{
+        {},
+        sets,
+        push_constants
+    });
+
+    return pipeline_layout;
+}
+
+static char* read_shader_file(const std::filesystem::path& path) {
+    static std::filesystem::path shader_path = "data/shaders";
+    char error[256] = {};
+    auto full_path = shader_path / path;
+    auto path_str = full_path.string();
+    auto parent_path_str = shader_path.string();
+    auto file = stb_include_file((char*) path_str.c_str(), 0, (char*)parent_path_str.c_str(), error);
+
+    if(error[0] != 0) {
+        spdlog::error("stb_include: Error {}", error);
+    }
+
+    return file;
+}
+
+static vk::ShaderStageFlagBits deduce_shader_type(const std::filesystem::path& path) {
+    const auto ext = path.extension();
+    if(ext.string() == ".vert") { return vk::ShaderStageFlagBits::eVertex; }
+    if(ext.string() == ".geom") { return vk::ShaderStageFlagBits::eGeometry; }
+    if(ext.string() == ".frag") { return vk::ShaderStageFlagBits::eFragment; }
+    if(ext.string() == ".comp") { return vk::ShaderStageFlagBits::eCompute; }
+    spdlog::error("Unrecognized shader extension: {}", ext.string());
+    std::abort();
+    return vk::ShaderStageFlagBits::eAll;
+}
+
+static shaderc_shader_kind to_shaderc_type(vk::ShaderStageFlagBits stage) {
+    switch (stage) {
+        case vk::ShaderStageFlagBits::eVertex: { return shaderc_vertex_shader; }
+        case vk::ShaderStageFlagBits::eGeometry: { return shaderc_geometry_shader; }
+        case vk::ShaderStageFlagBits::eFragment: { return shaderc_fragment_shader; }
+        case vk::ShaderStageFlagBits::eCompute: { return shaderc_compute_shader; }
+        default: { assert(std::format("Unrecognized shader type: {}", vk::to_string(stage)).c_str() && false); return {}; }
+    }
+}
+
+static std::vector<u32> compile_glsl_to_spv(const std::filesystem::path& path) {
+    auto file = read_shader_file(path);
+    shaderc::Compiler compiler;
+    auto result = compiler.CompileGlslToSpv(file, to_shaderc_type(deduce_shader_type(path)), path.filename().string().c_str());
+    if(result.GetCompilationStatus() != shaderc_compilation_status_success) {
+        spdlog::error("Shader {} compilation error: {}", path.filename().string(), result.GetErrorMessage().c_str());
+        return {};
+    }
+    free(file);
+
+    return std::vector<u32>{result.begin(), result.end()};
+}
+
+static ShaderResources get_shader_resources(const std::vector<u32>& ir) {
+    spirv_cross::Compiler compiler{ir}; 
+    const auto& resources = compiler.get_shader_resources();
+
+    const spirv_cross::SmallVector<spirv_cross::Resource>* resources_list[] {
+        &resources.separate_images,
+        &resources.storage_images,
+        &resources.separate_samplers,
+        &resources.uniform_buffers,
+        &resources.storage_buffers,
+        &resources.sampled_images
     };
 
-    const auto find_binding_in_set = [&](u32 set, u32 binding) -> auto {
-        auto& bindings = get_set_bindings(set);
-        return std::find_if(begin(bindings), end(bindings), [binding](auto&& a) {
-            return a.binding == binding;
-        });
+    vk::DescriptorType resource_types[] {
+        vk::DescriptorType::eSampledImage,
+        vk::DescriptorType::eStorageImage,
+        vk::DescriptorType::eSampler,
+        vk::DescriptorType::eUniformBuffer,
+        vk::DescriptorType::eStorageBuffer,
+        vk::DescriptorType::eCombinedImageSampler
     };
-        
-    for(const auto& sh : shaders) {
-        for(const auto &r : sh.second->resources) {
-            if(find_binding_in_set(r.descriptor_set, r.resource.binding) != end(get_set_bindings(r.descriptor_set))) {
-                spdlog::info("Descriptor set={} already contains binding={}. Skipping", r.descriptor_set, r.resource.binding); 
-                continue;
-            }
-            layout.descriptor_sets.at(r.descriptor_set).bindings.push_back(r.resource);
-            layout_bindings.at(r.descriptor_set).push_back(vk::DescriptorSetLayoutBinding{
-                r.resource.binding,
-                to_vk_desc_type(r.resource.type),
-                1,
-                ALL_STAGE_FLAGS
+
+    ShaderResources shader_resources;
+
+    for(u32 i=0; i<sizeof(resources_list)/sizeof(resources_list[0]); ++i) {
+        auto* rs = resources_list[i];
+        auto rt = resource_types[i];
+
+        for(const auto& r : *rs) {
+            const auto& type = compiler.get_type(r.base_type_id);
+            const auto set = compiler.get_decoration(r.id, spv::Decoration::DecorationDescriptorSet);
+            const auto binding = compiler.get_decoration(r.id, spv::Decoration::DecorationBinding);
+            const auto is_struct = type.basetype == spirv_cross::SPIRType::Struct;
+            const auto is_runtime_sized = [is_struct, &r, &compiler, &type, rt] {
+                if(is_struct && type.member_types.empty()) { return false; }
+                if(rt == vk::DescriptorType::eStorageBuffer) { return false; }
+
+                const auto& last_type = is_struct ? compiler.get_type(type.member_types.back()) : compiler.get_type(r.type_id);
+                
+                if(last_type.array.empty()) { return false; }
+                if(last_type.array.size() > 1u) { return false; }
+                if(last_type.array_size_literal[0] == false) {
+                    spdlog::error("SPIRV_CROSS array size literal at index 0 is false.");
+                    std::terminate();
+                }
+                return last_type.array[0] == 0u;
+            }();
+            
+            const auto count = [&r, &compiler] {
+                const auto type = compiler.get_type(r.type_id);
+                u32 count = 1;
+                for(const auto& e : type.array) { count *= e; } // if runtime-sized, count will be zero
+                return count;
+            }();
+
+            shader_resources.bindings.at(set).push_back({
+                .name = r.name,
+                .index = binding,
+                .binding = {
+                    .count = count,
+                    .type = rt
+                }
             });
         }
     }
 
-    std::vector<vk::DescriptorSetLayout> set_layouts(PipelineLayout::MAX_DESCRIPTOR_SET_COUNT);
-    for(u32 i=0; auto& lb : layout_bindings) {
-        layout.descriptor_sets.at(i).layout = get_context().renderer->device.createDescriptorSetLayout(vk::DescriptorSetLayoutCreateInfo{
-            {},
-            lb
-        });
-        set_layouts.at(i) = layout.descriptor_sets.at(i).layout;
-        ++i;
+    for(auto& e : shader_resources.bindings) {
+        std::sort(begin(e), end(e), [](auto&& a, auto&& b) { return a.index < b.index; });
     }
 
-    push_constants.setStageFlags(ALL_STAGE_FLAGS);
-    vk::PipelineLayoutCreateInfo layout_info{{}, set_layouts};
-    if(push_constants.size > 0u) {
-        layout_info.setPushConstantRanges(push_constants);
-    }
-    layout.layout = get_context().renderer->device.createPipelineLayout(layout_info);
-
-    return layout;
+    return shader_resources;
 }

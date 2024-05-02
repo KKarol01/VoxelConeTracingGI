@@ -4,12 +4,14 @@
 layout(triangles) in;
 layout(triangle_strip, max_vertices = 3) out;
 
-
 layout(location = 0) in GS_IN {
 	vec3 position;
 	vec3 position_proj;
 	vec3 normal;
 	vec3 color;
+	vec2 uv;
+	mat3 TBN;
+    flat uint instance_index;
 } vert[];
 
 layout(location=0) out GS_OUT {
@@ -17,6 +19,9 @@ layout(location=0) out GS_OUT {
 	vec3 position_proj;
 	vec3 normal;
 	vec3 color;
+	vec2 uv;
+	mat3 TBN;
+    flat uint instance_index;
 } geom;
 
 layout(set=0, binding=0) uniform GlobalUBO {
@@ -33,8 +38,9 @@ void main(){
 		geom.position_proj = vec3(vec4(vert[i].position_proj, 1.0));
 		geom.normal = vert[i].normal;
 		geom.color = vert[i].color;
-		// geom.uv = vert[i].uv;
-		// geom.TBN = vert[i].TBN;
+		geom.uv = vert[i].uv;
+		geom.TBN = vert[i].TBN;
+		geom.instance_index = vert[i].instance_index;
 		if(p.z > p.x && p.z > p.y){
 			gl_Position = vec4(vert[i].position_proj.xy, 0, 1);
 		} else if (p.x > p.y && p.x > p.z){

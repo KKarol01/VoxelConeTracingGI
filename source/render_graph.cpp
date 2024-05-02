@@ -1,11 +1,12 @@
 #include "render_graph.hpp"
 #include "renderer_types.hpp"
+#include "pipelines.hpp"
+#include "descriptor.hpp"
 #include "context.hpp"
 #include "renderer.hpp"
 #include <spdlog/spdlog.h>
 #include <vulkan/vulkan_structs.hpp>
 #include <vulkan/vulkan_to_string.hpp>
-#include <chrono>
 
 // #define RG_DEBUG_PRINT
 
@@ -15,7 +16,6 @@ static constexpr vk::ImageSubresourceRange to_vk_subresource_range(TextureRange 
 static constexpr vk::ImageLayout to_vk_layout(RGImageLayout layout);
 static constexpr vk::AttachmentLoadOp to_vk_load_op(RGAttachmentLoadStoreOp op);
 static constexpr vk::AttachmentStoreOp to_vk_store_op(RGAttachmentLoadStoreOp op);
-static constexpr vk::PipelineBindPoint to_vk_bind_point(PipelineType type);
 static constexpr vk::ImageViewType vk_img_type_to_vk_img_view_type(vk::ImageType type);
 static constexpr vk::Format to_vk_format(RGImageFormat format);
 static constexpr RGImageAspect deduce_img_aspect(RGResourceUsage usage);
@@ -246,15 +246,17 @@ const RPResource* RenderPass::get_resource(RgResourceHandle handle) const {
 void RenderGraph::create_rendering_resources() {
     auto* renderer = get_context().renderer;
 
-    std::vector<DescriptorSetLayout> descriptor_layouts;
-    std::vector<std::vector<std::pair<u32, DescriptorSetUpdate>>> descriptors;
+    std::vector<DescriptorLayout> descriptor_layouts;
+    std::vector<std::vector<DescriptorUpdate>> descriptors;
+    std::vector<const std::string*> names;
     descriptor_layouts.reserve(renderpasses.size());
     descriptors.resize(renderpasses.size());
+    names.reserve(renderpasses.size());
 
     for(u32 i=0; i<renderpasses.size(); ++i) {
         auto& pass = renderpasses.at(i);
-        auto& descriptor_layout = descriptor_layouts.emplace_back(std::format("{}_rg_desc_layout", pass.name), std::vector<DescriptorSetLayoutBinding>{});
-        descriptor_layout.bindings.reserve(pass.resources.size());
+        auto& descriptor_layout = descriptor_layouts.emplace_back(DescriptorLayout{{}, {}, {}, 0, false});
+        names.push_back(&pass.name);
         descriptors.at(i).reserve(pass.resources.size());
 
         for(const auto& rp_resource : pass.resources) {
@@ -282,26 +284,30 @@ void RenderGraph::create_rendering_resources() {
                     auto* binding = pass.pipeline->layout.find_binding(rg_resource.name);
                     if(!binding) { continue; }
 
-                    descriptor_layout.bindings.push_back(DescriptorSetLayoutBinding{
-                        binding->type,
-                        1,
-                        false
+                    descriptor_layout.bindings[descriptor_layout.count++] = DescriptorBinding{1, binding->type};
+
+                    auto sampler = renderer->device.createSampler(vk::SamplerCreateInfo{
+                        {},
+                        rp_resource.texture_info.min,
+                        rp_resource.texture_info.mag,
+                        rp_resource.texture_info.mip,
+                        {}, {}, {}, 0.0f, false, 0.0f, false, {},
+                        rp_resource.texture_info.min_lod,
+                        rp_resource.texture_info.max_lod
                     });
-                    descriptors.at(i).emplace_back(binding->binding, DescriptorSetUpdate{
-                        binding->type,
-                        std::make_pair(view, to_vk_layout(rp_resource.texture_info.required_layout))
+
+                    descriptors.at(i).push_back(DescriptorUpdate{
+                        std::make_tuple(view, to_vk_layout(rp_resource.texture_info.required_layout), sampler)
                     });
                 }
             } else { std::terminate(); }
         }
     }
 
-    const auto layout_handles = descriptor_set->push_layouts(descriptor_layouts);
-    for(u32 i=0; i<layout_handles.size(); ++i) {
-        renderpasses.at(i).descriptor = layout_handles.at(i);
-        for(const auto& e : descriptors.at(i)) {
-            descriptor_set->write_descriptor(layout_handles.at(i), e.first, e.second);
-        }
+    for(u32 i=0; i<descriptor_layouts.size(); ++i) {
+        auto set = descriptor_allocator->allocate(*names.at(i), descriptor_layouts.at(i));
+        renderpasses.at(i).descriptor = set;
+        set.update(0, 0, descriptors.at(i));
     }
 }
 
@@ -339,10 +345,10 @@ RenderGraph::BarrierStages RenderGraph::deduce_stages_and_accesses(const RenderP
                             std::abort();
                         }
 
-                        if(binding->type == DescriptorType::StorageImage) {
+                        if(binding->type == vk::DescriptorType::eStorageImage) {
                             if(read)    { return vk::AccessFlagBits2::eShaderStorageRead; }
                             else        { return vk::AccessFlagBits2::eShaderStorageWrite; }
-                        } else if(binding->type == DescriptorType::SampledImage) {
+                        } else if(binding->type == vk::DescriptorType::eSampledImage) {
                             if(read)    { return vk::AccessFlagBits2::eShaderSampledRead; }
                             else {
                                 spdlog::error("You cannot write to a sampled image.");
@@ -380,7 +386,7 @@ RenderGraph::BarrierStages RenderGraph::deduce_stages_and_accesses(const RenderP
 void RenderGraph::clear_resources() {
     resources.clear(); 
     for(auto& rp : renderpasses) {
-        descriptor_set->free_allocation(rp.descriptor);
+        // descriptor_set->free_allocation(rp.descriptor);
     }
     renderpasses.clear();
     stage_deps.clear();
@@ -592,12 +598,13 @@ void RenderGraph::render(vk::CommandBuffer cmd, vk::Image swapchain_image, vk::I
 
             if(pass.pipeline) {
                 auto* renderer = get_context().renderer;
-                cmd.bindPipeline(to_vk_bind_point(pass.pipeline->type), pass.pipeline->pipeline);
+                cmd.bindPipeline(pass.pipeline->type, pass.pipeline->pipeline);
 
-                if(pass.descriptor) {
-                }
+                // if(pass.descriptor) {
+                //     cmd.bindDescriptorSets(to_vk_bind_point(pass.pipeline->type), pass.pipeline->layout.layout, 2, renderer->descriptor_set->get_set(pass.descriptor), {});
+                // }
 
-                if(pass.pipeline->type == PipelineType::Graphics) {
+                if(pass.pipeline->type == vk::PipelineBindPoint::eGraphics) {
                     std::vector<vk::RenderingAttachmentInfo> color_attachments;
                     color_attachments.reserve(pass.color_attachments.size());
                     vk::RenderingAttachmentInfo depth_attachment;
@@ -675,7 +682,7 @@ void RenderGraph::render(vk::CommandBuffer cmd, vk::Image swapchain_image, vk::I
 
             if(pass.func) { pass.func(cmd); }
 
-            if(pass.pipeline && pass.pipeline->type == PipelineType::Graphics) {
+            if(pass.pipeline && pass.pipeline->type == vk::PipelineBindPoint::eGraphics) {
                 cmd.endRendering();
             }
         }
@@ -758,17 +765,6 @@ static constexpr vk::AttachmentStoreOp to_vk_store_op(RGAttachmentLoadStoreOp op
             spdlog::error("Unrecognized RGAttachmentStoreOp {}", (u32)op);
             std::abort();
         }
-    }
-}
-
-static constexpr vk::PipelineBindPoint to_vk_bind_point(PipelineType type) { 
-    switch (type) {
-        case PipelineType::Compute: { return vk::PipelineBindPoint::eCompute; }
-        case PipelineType::Graphics: { return vk::PipelineBindPoint::eGraphics; }
-        default: {
-            spdlog::error("Unrecognized PipelineType {}", (u32)type);
-            std::abort();
-        } 
     }
 }
 

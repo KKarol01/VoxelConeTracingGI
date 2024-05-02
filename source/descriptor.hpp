@@ -1,73 +1,68 @@
 #pragma once
 
-#include "renderer_types.hpp"
+#include "types.hpp"
+#include "pipelines.hpp"
 #include <vulkan/vulkan_structs.hpp>
 #include <vector>
-#include <map>
 #include <variant>
 
-struct DescriptorSetLayoutBinding {
-    DescriptorSetLayoutBinding(DescriptorType type, u32 count, bool is_runtime_sized = false)
-        : type(type), count(count), is_runtime_sized(is_runtime_sized) {}
-
-    DescriptorType type;
-    u32 count;
-    bool is_runtime_sized;
+struct DescriptorUpdate {
+    std::variant<
+        std::tuple<vk::ImageView, vk::ImageLayout, vk::Sampler>,
+        const Buffer* // buffer, offset = 0, size = read
+    > data;
 };
 
-struct DescriptorSetLayout : public Handle<DescriptorSetLayout> {
-    constexpr DescriptorSetLayout() = default;
-    DescriptorSetLayout(std::string_view name, const std::vector<DescriptorSetLayoutBinding> &bindings)
-        : Handle(HandleGenerate), name(name), bindings(bindings) {}
-
-    std::string name;
-    std::vector<DescriptorSetLayoutBinding> bindings;
-    vk::DescriptorSetLayout layout;
+struct DescriptorPool {
+    vk::DescriptorPool pool; 
+    u32 max_allocations;
+    u32 allocations;
 };
 
-struct DescriptorSetAllocation : public Handle<DescriptorSetAllocation> {
-    constexpr DescriptorSetAllocation() = default;
-    constexpr DescriptorSetAllocation(vk::DescriptorSet set, vk::DescriptorSetLayout layout, vk::DescriptorPool pool, u32 variable_binding, u32 max_variable_size)
-        : Handle(HandleGenerate), set(set), layout(layout), pool(pool), variable_binding(variable_binding), max_variable_size(max_variable_size), current_variable_size(0u) {}
-    vk::DescriptorSet set;
-    vk::DescriptorSetLayout layout;
+struct DescriptorAllocation : public Handle<DescriptorAllocation> {
+    constexpr DescriptorAllocation(u32 layout_idx, vk::DescriptorPool pool, u32 variable_size): Handle(HandleGenerate), layout_idx(layout_idx), pool(pool), variable_size(variable_size) {}
+    u32 layout_idx;
     vk::DescriptorPool pool;
-    u32 variable_binding;
-    u32 max_variable_size;
-    u32 current_variable_size;
+    u32 variable_size;
 };
 
-struct DescriptorSetUpdate {
-    DescriptorType type;
-    std::variant<std::tuple<vk::ImageView, vk::ImageLayout>, 
-                 std::tuple<Handle<GpuBuffer>, u64>,
-                 vk::Sampler> payload;
-};
+class DescriptorAllocator;
 
 class DescriptorSet {
-public: 
-    DescriptorSet() = default;
-    DescriptorSet(vk::Device device);
+public:
+    constexpr DescriptorSet() noexcept = default;
+    constexpr DescriptorSet(DescriptorAllocator* allocator, vk::DescriptorSet set, Handle<DescriptorAllocation> allocation): allocator(allocator), set(set), allocation(allocation) {}
 
-    Handle<DescriptorSetAllocation> push_layout(const DescriptorSetLayout& layout);
-    std::vector<Handle<DescriptorSetAllocation>> push_layouts(const std::vector<DescriptorSetLayout>& layouts);
-    bool write_descriptor(Handle<DescriptorSetAllocation> handle, u32 binding, const DescriptorSetUpdate& descriptor);
-    bool write_descriptor(Handle<DescriptorSetAllocation> handle, u32 binding, u32 array_index, const DescriptorSetUpdate& descriptor);
-    vk::DescriptorSet get_set(Handle<DescriptorSetAllocation> handle);
-    vk::DescriptorSetLayout get_layout(Handle<DescriptorSetAllocation> handle);
-    void free_allocation(Handle<DescriptorSetAllocation> handle);
+    void update(u32 binding, u32 array_element, const std::vector<DescriptorUpdate>& updates);
+
+    vk::DescriptorSet set;
 
 private:
-    DescriptorSetLayout* find_matching_layout(const DescriptorSetLayout& layout);
-    std::vector<DescriptorType> get_layout_types(const DescriptorSetLayout& layout);
-    DescriptorSetAllocation& get_allocation(Handle<DescriptorSetAllocation> handle);
-    bool is_pool_compatible_with_layout(const std::vector<DescriptorType>& pool, const DescriptorSetLayout& layout);
-    void insert_compatible_pools_to_layout(const DescriptorSetLayout& layout);
-    void propagate_pool_to_compatible_layouts(vk::DescriptorPool pool, const std::vector<DescriptorType>& types);
+    DescriptorAllocator* allocator;
+    Handle<DescriptorAllocation> allocation; 
+};
+
+class DescriptorAllocator {
+public: 
+    DescriptorAllocator() noexcept = default;
+    DescriptorAllocator(vk::Device device) noexcept: device(device) {};
+
+    DescriptorSet allocate(std::string_view label, const DescriptorLayout& layout, u32 max_sets = 8, u32 variable_size = 0);
+    DescriptorAllocation* find_allocation(Handle<DescriptorAllocation> allocation);
+
+private:
+    struct Pools {
+        std::vector<DescriptorPool> pools;
+    };
+
+    std::pair<DescriptorAllocator::Pools*, u32> find_matching_pools(const DescriptorLayout& layout);
+    DescriptorPool* create_pool(const DescriptorLayout& layout, u32 max_sets, Pools& pools);
+    vk::DescriptorSetLayout create_layout(const DescriptorLayout& layout);
 
     vk::Device device;
-    std::vector<DescriptorSetAllocation> sets;
-    std::vector<std::pair<vk::DescriptorPool, std::vector<DescriptorType>>> pools;
-    std::map<vk::DescriptorSetLayout, std::vector<vk::DescriptorPool>> layout_compatible_pools;
-    std::vector<DescriptorSetLayout> layouts;
+    std::vector<DescriptorLayout> layouts;
+    std::vector<Pools> pools;
+    std::vector<DescriptorAllocation> allocations;
+
+    friend class DescriptorSet;
 };

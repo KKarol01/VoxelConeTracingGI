@@ -107,6 +107,16 @@ Handle<Model> Scene::load_model(const std::filesystem::path& path) {
                     mesh.vertices[initial_index + idx].uv = glm::vec2{0.0f};
                 });
             }
+            if(primitive.findAttribute("TANGENT") != primitive.attributes.end()) {
+                auto& tans = asset->accessors[primitive.findAttribute("TANGENT")->second];
+                fastgltf::iterateAccessorWithIndex<glm::vec4>(asset.get(), tans, [&](glm::vec4 vec, size_t idx) {
+                    mesh.vertices[initial_index + idx].tangent = vec;
+                });
+            } else {
+                fastgltf::iterateAccessorWithIndex<glm::vec3>(asset.get(), positions, [&](glm::vec3 vec, size_t idx) {
+                    mesh.vertices[initial_index + idx].tangent = glm::vec3{0.0f};
+                });
+            }
 
             initial_index = mesh.indices.size();
             mesh.indices.resize(mesh.indices.size() + indices.count);
