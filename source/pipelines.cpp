@@ -194,10 +194,10 @@ Pipeline PipelineBuilder::build_compute(std::string_view label) {
     Shader compute_shader{renderer->device, shaders.at(0)};
 
     PipelineLayout layout = coalesce_shader_resources_into_layout({compute_shader});
-    set_debug_name(layout.layout, std::format("{}_layout", label));
+    build_layout(std::format("{}_layout", label), renderer->device, layout);
 
     const auto type = deduce_shader_type(shaders.at(0));
-    assert("Shader type must be compute" && type == vk::ShaderStageFlagBits::eVertex);
+    assert("Shader type must be compute" && type == vk::ShaderStageFlagBits::eCompute);
 
     vk::ComputePipelineCreateInfo info{
         {},

@@ -221,6 +221,14 @@ RenderPass& RenderPass::write_depth_attachment(RPResource info) {
     return *this;
 }
 
+RenderPass& RenderPass::set_sampler(RPResource info) {
+    info.usage = RGResourceUsage::Sampler;
+    info.is_read = true;
+    resources.push_back(info);
+    samplers.push_back(resources.size() - 1);
+    return *this;
+}
+
 RenderPass& RenderPass::set_rendering_extent(const RenderPassRenderingExtent& extent) {
     this->extent = extent;
     return *this;
@@ -228,11 +236,6 @@ RenderPass& RenderPass::set_rendering_extent(const RenderPassRenderingExtent& ex
 
 RenderPass& RenderPass::set_pipeline(Pipeline* pipeline) {
     this->pipeline = pipeline;
-    return *this;
-}
-
-RenderPass& RenderPass::set_make_sampler(bool make) {
-    make_sampler = make;
     return *this;
 }
 
@@ -270,7 +273,7 @@ void RenderGraph::create_rendering_resources() {
                     {},
                     texture.image,
                     vk_img_type_to_vk_img_view_type(texture->type),
-                    rp_resource.texture_info.mutable_format == RGImageFormat::DeduceFromVkImage ? texture->format : to_vk_format(rp_resource.texture_info.mutable_format),
+                    rp_resource.texture_info.mutable_format == RGImageFormat::CopyFromVkImage ? texture->format : to_vk_format(rp_resource.texture_info.mutable_format),
                     {},
                     to_vk_subresource_range(rp_resource.texture_info.range, deduce_img_aspect(rp_resource.usage))
                 });
@@ -300,6 +303,11 @@ void RenderGraph::create_rendering_resources() {
                         std::make_tuple(view, to_vk_layout(rp_resource.texture_info.required_layout), sampler)
                     });
                 }
+            } else if(auto* sampler = std::get_if<vk::Sampler>(&rg_resource.resource)) {
+                descriptor_layout.bindings[descriptor_layout.count++] = DescriptorBinding{1, vk::DescriptorType::eSampler};
+                descriptors.at(i).push_back(DescriptorUpdate{
+                    std::make_tuple(vk::ImageView{}, vk::ImageLayout{}, *sampler)
+                });
             } else { std::terminate(); }
         }
     }
@@ -348,7 +356,7 @@ RenderGraph::BarrierStages RenderGraph::deduce_stages_and_accesses(const RenderP
                         if(binding->type == vk::DescriptorType::eStorageImage) {
                             if(read)    { return vk::AccessFlagBits2::eShaderStorageRead; }
                             else        { return vk::AccessFlagBits2::eShaderStorageWrite; }
-                        } else if(binding->type == vk::DescriptorType::eSampledImage) {
+                        } else if(binding->type == vk::DescriptorType::eSampledImage || binding->type == vk::DescriptorType::eCombinedImageSampler) {
                             if(read)    { return vk::AccessFlagBits2::eShaderSampledRead; }
                             else {
                                 spdlog::error("You cannot write to a sampled image.");
@@ -471,6 +479,7 @@ void RenderGraph::bake_graph() {
                         insert_image_barrier(0u, nullptr, &renderpass, pass_resource, pass_resource, old_layout, to_vk_layout(pass_resource.texture_info.required_layout), false, is_read, r);
                     }
                 } break;
+                case RGResourceUsage::Sampler: { continue; } break;
                 default: {
                     spdlog::error("Unrecognized pass resource usage {}", (u32)pass_resource.usage);
                     std::abort();
@@ -493,6 +502,7 @@ void RenderGraph::bake_graph() {
                             resource.second.insert_write(RGTextureAccess{&renderpass, pass_resource.texture_info.required_layout, pass_resource.texture_info.range});
                         }
                     },
+                    [](vk::Sampler) {}
                 },
                 graph_resource.resource
             );
@@ -600,9 +610,9 @@ void RenderGraph::render(vk::CommandBuffer cmd, vk::Image swapchain_image, vk::I
                 auto* renderer = get_context().renderer;
                 cmd.bindPipeline(pass.pipeline->type, pass.pipeline->pipeline);
 
-                // if(pass.descriptor) {
-                //     cmd.bindDescriptorSets(to_vk_bind_point(pass.pipeline->type), pass.pipeline->layout.layout, 2, renderer->descriptor_set->get_set(pass.descriptor), {});
-                // }
+                if(pass.descriptor.set) {
+                    cmd.bindDescriptorSets(pass.pipeline->type, pass.pipeline->layout.layout, 2, pass.descriptor.set, {});
+                }
 
                 if(pass.pipeline->type == vk::PipelineBindPoint::eGraphics) {
                     std::vector<vk::RenderingAttachmentInfo> color_attachments;

@@ -1,5 +1,5 @@
 #version 460 core
-#pragma shader_stage(fragment)
+#extension GL_EXT_nonuniform_qualifier : require
 
 // #define MAX_LIGHTS 1
 // #define PI 3.14159265359
@@ -18,6 +18,7 @@ layout(location=0) in FS_IN {
 } frag;
 
 #include "global_set"
+#include "material_set"
 
 // struct Material {
 // 	vec3 diffuseColor;
@@ -44,8 +45,8 @@ layout(location=0) in FS_IN {
 
 // layout(binding=0) uniform sampler2D tex_diffuse;
 // layout(binding=1) uniform sampler2D tex_normal;
-layout(set=1, binding=0, r32ui) uniform coherent volatile uimage3D voxel_albedo;
-layout(set=1, binding=1, r32ui) uniform coherent volatile uimage3D voxel_normal;
+layout(set=2, binding=0, r32ui) uniform coherent volatile uimage3D voxel_albedo;
+layout(set=2, binding=1, r32ui) uniform coherent volatile uimage3D voxel_normal;
 // layout(set=1, binding=2) uniform sampler voxel_sampler;
 
 // layout(set=2, binding=1) uniform sampler diff_samp;
@@ -154,16 +155,25 @@ void main() {
 	// vec4 res = 1.0 * vec4(vec3(geom_color * color), 1);
 	// res = clamp(res, 0.0, 1.0);
 	
-	// // Color done, now save it.
+	// Color done, now save it.
+
+    vec3 albedo = frag.color;
+    vec3 normal = frag.normal;
+    Material mat = materials[frag.instance_index];
+    if(mat.diffuse_idx >= 0) {
+        albedo = texture(material_textures[nonuniformEXT(mat.diffuse_idx)], frag.uv).rgb;
+        normal = texture(material_textures[nonuniformEXT(mat.normal_idx)], frag.uv).rgb;
+        normal = normalize(frag.TBN * (normal * 2.0 - 1.0));
+    }
 
 	vec3 voxel = frag.position * 0.5 + 0.5;
 	ivec3 pos = ivec3(256.0 * voxel);
 	// // pos.y += (resolution + 2) * level;
 	// // imageAtomicRGBA8Avg(pos, res);
-	vec4 frag_diff_rgba = vec4(frag.color, 1.0);
+	vec4 frag_diff_rgba = vec4(albedo, 1.0);
 	vec3 frag_diff = frag_diff_rgba.rgb;
 	float opacity = frag_diff_rgba.a;
-	vec3 frag_nrm = frag.normal;
+	vec3 frag_nrm = normal;
 
 	if(opacity < 1e-6) { return; }
 

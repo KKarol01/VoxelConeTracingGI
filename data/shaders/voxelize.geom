@@ -1,5 +1,4 @@
 #version 460 core
-#pragma shader_stage(geometry)
 
 layout(triangles) in;
 layout(triangle_strip, max_vertices = 3) out;

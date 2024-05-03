@@ -544,20 +544,26 @@ bool Renderer::initialize_render_passes() {
     voxel_normal = Texture3D{"voxel_normal", 256, 256, 256, vk::Format::eR32Uint, 1, vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eTransferSrc | vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled};
     voxel_radiance = Texture3D{"voxel_radiance", 256, 256, 256, vk::Format::eR8G8B8A8Unorm, (u32)std::log2f(256.0f)+1, vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eTransferSrc | vk::ImageUsageFlagBits::eTransferDst | vk::ImageUsageFlagBits::eSampled};
     depth_texture = Texture2D{"depth_texture", window_width, window_height, vk::Format::eD32Sfloat, 1, vk::ImageUsageFlagBits::eDepthStencilAttachment};
+    vk::Sampler radiance_sampler = device.createSampler(vk::SamplerCreateInfo{
+        {}, vk::Filter::eLinear, vk::Filter::eLinear, vk::SamplerMipmapMode::eLinear, 
+        vk::SamplerAddressMode::eClampToEdge, vk::SamplerAddressMode::eClampToEdge, vk::SamplerAddressMode::eClampToEdge,
+        0.0f, false, 0.0f, false, {}, 0.0f, (f32)voxel_radiance->mips
+    });
+
+    const std::vector<vk::VertexInputBindingDescription> common_input_bindings{
+        vk::VertexInputBindingDescription{0, sizeof(Vertex), vk::VertexInputRate::eVertex}
+    };
+    const std::vector<vk::VertexInputAttributeDescription> common_input_attributes{
+        vk::VertexInputAttributeDescription{0, 0, vk::Format::eR32G32B32Sfloat, 0},
+        vk::VertexInputAttributeDescription{1, 0, vk::Format::eR32G32B32Sfloat, 12},
+        vk::VertexInputAttributeDescription{2, 0, vk::Format::eR32G32B32Sfloat, 24},
+        vk::VertexInputAttributeDescription{3, 0, vk::Format::eR32G32Sfloat, 36},
+        vk::VertexInputAttributeDescription{4, 0, vk::Format::eR32G32B32Sfloat, 44},
+    };
 
     PipelineBuilder default_lit_builder{this};
     pp_default_lit = default_lit_builder
-        .with_vertex_input(
-            {
-                vk::VertexInputBindingDescription{0, sizeof(Vertex), vk::VertexInputRate::eVertex}
-            },
-            {
-                vk::VertexInputAttributeDescription{0, 0, vk::Format::eR32G32B32Sfloat, 0},
-                vk::VertexInputAttributeDescription{1, 0, vk::Format::eR32G32B32Sfloat, 12},
-                vk::VertexInputAttributeDescription{2, 0, vk::Format::eR32G32B32Sfloat, 24},
-                vk::VertexInputAttributeDescription{3, 0, vk::Format::eR32G32Sfloat, 36},
-                vk::VertexInputAttributeDescription{4, 0, vk::Format::eR32G32B32Sfloat, 44},
-            })
+        .with_vertex_input(common_input_bindings, common_input_attributes)
         .with_depth_testing(true, true, vk::CompareOp::eLess)
         .with_culling(vk::CullModeFlagBits::eBack, vk::FrontFace::eCounterClockwise)
         .with_shaders({"default_lit.vert", "default_lit.frag"})
@@ -566,46 +572,24 @@ bool Renderer::initialize_render_passes() {
         .with_variable_upper_limits({128})
         .build_graphics("default_lit_pipeline");
 
-    // PipelineBuilder voxelize_builder{this};
-    // pp_voxelize = voxelize_builder
-    //     .with_vertex_input(
-    //         {
-    //             vk::VertexInputBindingDescription{0, sizeof(Vertex), vk::VertexInputRate::eVertex}
-    //         },
-    //         {
-    //             vk::VertexInputAttributeDescription{0, 0, vk::Format::eR32G32B32Sfloat, 0},
-    //             vk::VertexInputAttributeDescription{1, 0, vk::Format::eR32G32B32Sfloat, 12},
-    //             vk::VertexInputAttributeDescription{2, 0, vk::Format::eR32G32B32Sfloat, 24},
-    //             vk::VertexInputAttributeDescription{3, 0, vk::Format::eR32G32Sfloat, 36},
-    //             vk::VertexInputAttributeDescription{4, 0, vk::Format::eR32G32B32Sfloat, 44},
-    //         })
-    //     .with_depth_testing(false, false, vk::CompareOp::eAlways)
-    //     .with_culling(vk::CullModeFlagBits::eNone, vk::FrontFace::eCounterClockwise)
-    //     .with_shaders({
-    //         {vk::ShaderStageFlagBits::eVertex, &shaders.at(2)},
-    //         {vk::ShaderStageFlagBits::eGeometry, &shaders.at(3)},
-    //         {vk::ShaderStageFlagBits::eFragment, &shaders.at(4)},
-    //     })
-    //     .build_graphics("voxelize_pipeline");
+    PipelineBuilder voxelize_builder{this};
+    pp_voxelize = voxelize_builder
+        .with_vertex_input(common_input_bindings, common_input_attributes)
+        .with_depth_testing(false, false, vk::CompareOp::eAlways)
+        .with_culling(vk::CullModeFlagBits::eNone, vk::FrontFace::eCounterClockwise)
+        .with_shaders({"voxelize.vert", "voxelize.geom", "voxelize.frag"})
+        .with_variable_upper_limits({128})
+        .build_graphics("voxelize_pipeline");
 
-    // PipelineBuilder merge_voxels_builder{this};
-    // pp_merge_voxels = merge_voxels_builder
-    //     .with_shaders({
-    //         {vk::ShaderStageFlagBits::eCompute, &shaders.at(5)},
-    //     })
-    //     .build_compute("merge_voxels_pipeline");
+    PipelineBuilder merge_voxels_builder{this};
+    pp_merge_voxels = merge_voxels_builder
+        .with_shaders({"merge_voxels.comp"})
+        .with_variable_upper_limits({128})
+        .build_compute("merge_voxels_pipeline");
 
     // PipelineBuilder imgui_builder{this};
     // pp_imgui = imgui_builder
-    //     .with_vertex_input(
-    //         {
-    //             vk::VertexInputBindingDescription{0, sizeof(Vertex), vk::VertexInputRate::eVertex}
-    //         },
-    //         {
-    //             vk::VertexInputAttributeDescription{0, 0, vk::Format::eR32G32Sfloat, 0},
-    //             vk::VertexInputAttributeDescription{1, 0, vk::Format::eR32G32Sfloat, 8},
-    //             vk::VertexInputAttributeDescription{2, 0, vk::Format::eR32G32B32A32Sfloat, 16},
-    //         })
+    //     .with_vertex_input(common_input_bindings, common_input_attributes)
     //     .with_shaders({
     //         {vk::ShaderStageFlagBits::eVertex, &shaders.at(6)},
     //         {vk::ShaderStageFlagBits::eFragment, &shaders.at(7)},
@@ -617,12 +601,14 @@ bool Renderer::initialize_render_passes() {
     global_buffer = Buffer{"global_ubo", vk::BufferUsageFlagBits::eUniformBuffer, true, std::as_bytes(std::span{global_buffer_size})};
     global_set.update(0, 0, {{&global_buffer}});
 
+
     #if 1
     const auto res_voxel_albedo = render_graph->add_resource(RGResource{"voxel_albedo", voxel_albedo});
     const auto res_voxel_normal = render_graph->add_resource(RGResource{"voxel_normal", voxel_normal});
     const auto res_voxel_radiance = render_graph->add_resource(RGResource{"voxel_radiance", voxel_radiance});
     const auto res_color_attachment = render_graph->add_resource(RGResource{"color_attachment", Texture{}});
     const auto res_depth_attachment = render_graph->add_resource(RGResource{"depth_attachment", depth_texture});
+    const auto res_radiance_sampler = render_graph->add_resource(RGResource{"radiance_sampler", radiance_sampler});
 
     const auto create_clear_pass = [&](RgResourceHandle resource) {
         RenderPass pass_clear;
@@ -643,9 +629,9 @@ bool Renderer::initialize_render_passes() {
         return pass_clear;
     };
 
-    // render_graph->add_render_pass(create_clear_pass(res_voxel_albedo));
-    // render_graph->add_render_pass(create_clear_pass(res_voxel_normal));
-    // render_graph->add_render_pass(create_clear_pass(res_voxel_radiance));
+    render_graph->add_render_pass(create_clear_pass(res_voxel_albedo));
+    render_graph->add_render_pass(create_clear_pass(res_voxel_normal));
+    render_graph->add_render_pass(create_clear_pass(res_voxel_radiance));
 
     RenderPass pass_voxelization;
     pass_voxelization
@@ -672,7 +658,7 @@ bool Renderer::initialize_render_passes() {
         .set_draw_func([this](vk::CommandBuffer cmd) {
             render_scene.render(cmd);
         });
-    // render_graph->add_render_pass(pass_voxelization);
+    render_graph->add_render_pass(pass_voxelization);
 
     RenderPass pass_radiance_inject;
     pass_radiance_inject
@@ -705,10 +691,11 @@ bool Renderer::initialize_render_passes() {
                 .required_layout = RGImageLayout::General,
             }
         })
+        .set_sampler(res_radiance_sampler) 
         .set_draw_func([this](vk::CommandBuffer cmd) {
             cmd.dispatch(256/8, 256/8, 256/8);
         });
-    // render_graph->add_render_pass(pass_radiance_inject);
+    render_graph->add_render_pass(pass_radiance_inject);
 
     for(u32 i=1; i<voxel_radiance->mips; ++i) {
         RenderPass mip_pass;
@@ -742,7 +729,7 @@ bool Renderer::initialize_render_passes() {
                     },
                     vk::Filter::eLinear);
             });
-        // render_graph->add_render_pass(mip_pass);
+        render_graph->add_render_pass(mip_pass);
     }
         
     RenderPass pass_default_lit;
@@ -753,14 +740,14 @@ bool Renderer::initialize_render_passes() {
             .viewport = {0.0f, 768.0f, 1024.0f, -768.0f, 0.0f, 1.0f},
             .scissor = {0, 0, 1024, 768}
         })
-        // .read_from_image(RPResource{
-        //     res_voxel_radiance, 
-        //     RGSyncStage::Fragment,
-        //     TextureInfo{
-        //         .required_layout = RGImageLayout::General,
-        //         .range = {0, voxel_radiance->mips, 0, 1}
-        //     }
-        // })
+        .read_from_image(RPResource{
+            res_voxel_radiance, 
+            RGSyncStage::Fragment,
+            TextureInfo{
+                .required_layout = RGImageLayout::General,
+                .range = {0, voxel_radiance->mips, 0, 1}
+            }
+        })
         .write_color_attachment(RPResource{
             res_color_attachment,
             RGSyncStage::ColorAttachmentOutput,

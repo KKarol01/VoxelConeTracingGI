@@ -1,5 +1,4 @@
 #version 460 core
-#pragma shader_stage(vertex)
 
 layout(location = 0) in vec3 position;
 layout(location = 1) in vec3 normal;
@@ -7,15 +6,7 @@ layout(location = 2) in vec3 color;
 layout(location = 3) in vec2 uv;
 layout(location = 4) in vec3 tangent;
 
-layout(set=0, binding=0) uniform GlobalUBO {
-	mat4 P;
-	mat4 V;
-	// vec3 cam_pos;
-	// uint num_point_lights;
-};
-// layout(set=2, binding=0) readonly buffer ModelsSSBO {
-//     mat4 Models[];
-// };
+#include "global_set"
 
 layout(location = 0) out VS_OUT {
 	vec3 position;
@@ -28,7 +19,6 @@ layout(location = 0) out VS_OUT {
 } vert;
 
 void main(){
-	// mat4 M = Models[gl_InstanceIndex];
 	vec4 pos = vec4(position, 1.0);
 	vert.position = pos.xyz;
 	vert.uv = uv;

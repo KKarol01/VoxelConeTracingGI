@@ -5,10 +5,10 @@
 layout(local_size_x=8, local_size_y=8, local_size_z=8) in;
 
 #include "global_set"
-layout(set=1, binding=0) uniform texture3D voxel_albedo;
-layout(set=1, binding=1, rgba8) uniform image3D voxel_normal;
-layout(set=1, binding=2, rgba8) uniform writeonly image3D voxel_radiance;
-layout(set=1, binding=3) uniform sampler voxel_sampler;
+layout(set=2, binding=0) uniform texture3D voxel_albedo;
+layout(set=2, binding=1, rgba8) uniform image3D voxel_normal;
+layout(set=2, binding=2, rgba8) uniform writeonly image3D voxel_radiance;
+layout(set=2, binding=3) uniform sampler voxel_sampler;
 // layout(set=1, binding=4) uniform textureCube depth_cube;
 // layout(set=1, binding=5) uniform sampler depth_cube_sampler;
 
@@ -71,9 +71,9 @@ void main() {
 
 
     PointLight point_lights[1];
-    point_lights[0].pos = vec3(0.0, 0.65, 0.0);
+    point_lights[0].pos = vec3(0.0, 0.45, 0.0);
     point_lights[0].col = vec3(1.0);
-    point_lights[0].att = vec3(0.8, 0.8, 0.8);
+    point_lights[0].att = vec3(0.2, 0.4, 0.6);
     // point_lights[0].att = vec3(1.0);
 
     ivec3 write_pos = ivec3(gl_GlobalInvocationID.xyz);

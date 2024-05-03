@@ -17,7 +17,7 @@ enum class RGResourceType {
 };
 
 enum class RGResourceUsage {
-    None, Image, ColorAttachment, DepthAttachment
+    None, Image, ColorAttachment, DepthAttachment, Sampler
 };
 
 enum class RGAccessType { 
@@ -48,7 +48,7 @@ enum class RGImageLayout {
 };
 
 enum class RGImageFormat {
-    DeduceFromVkImage, RGBA8Unorm, R32UI
+    CopyFromVkImage, RGBA8Unorm, R32UI
 };
 
 struct TextureRange {
@@ -61,7 +61,7 @@ struct TextureRange {
 
 struct TextureInfo {
     RGImageLayout required_layout;
-    RGImageFormat mutable_format{RGImageFormat::DeduceFromVkImage};
+    RGImageFormat mutable_format{RGImageFormat::CopyFromVkImage};
     TextureRange range;
     vk::Filter min{vk::Filter::eLinear}, mag{vk::Filter::eLinear};
     vk::SamplerMipmapMode mip{vk::SamplerMipmapMode::eLinear};
@@ -126,6 +126,7 @@ private:
 
 struct RGResource {
     RGResource(const std::string& name, const Texture& texture): name(name), resource(std::make_pair(texture, RGTextureAccesses{})) {}
+    RGResource(const std::string& name, vk::Sampler sampler): name(name), resource(sampler) {}
 
     RGResource(const RGResource& o) noexcept = delete;
     RGResource& operator=(const RGResource& o) noexcept = delete;
@@ -137,7 +138,7 @@ struct RGResource {
     }
     
     std::string name;
-    std::variant<Buffer, std::pair<Texture, RGTextureAccesses>> resource;
+    std::variant<Buffer, std::pair<Texture, RGTextureAccesses>, vk::Sampler> resource;
 };
 
 struct RPResource {
@@ -145,6 +146,8 @@ struct RPResource {
         : resource(resource), stage(stage), buffer_info(info) {}
     RPResource(RgResourceHandle resource, RGSyncStage stage, const TextureInfo& info)
         : resource(resource), stage(stage), texture_info(info) {}
+    // for samplers
+    RPResource(RgResourceHandle resource): resource(resource) {}
     
     RgResourceHandle resource;
     RGSyncStage stage;
@@ -179,9 +182,9 @@ struct RenderPass {
     RenderPass& write_color_attachment(RPResource info);
     RenderPass& read_color_attachment(RPResource info);
     RenderPass& write_depth_attachment(RPResource info);
+    RenderPass& set_sampler(RPResource info);
     RenderPass& set_rendering_extent(const RenderPassRenderingExtent& extent);
     RenderPass& set_pipeline(Pipeline* pipeline);
-    RenderPass& set_make_sampler(bool make);
     const RPResource* get_resource(RgResourceHandle handle) const;
 
     std::string name;
@@ -192,7 +195,7 @@ struct RenderPass {
     std::vector<RPResource> resources;
     std::vector<u32> color_attachments; 
     std::optional<u32> depth_attachment;
-    bool make_sampler{true};
+    std::vector<u32> samplers; 
 };
 
 class RenderGraph {
