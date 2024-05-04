@@ -30,7 +30,6 @@ PFN_vkGetDeviceProcAddr SetDebugNameDetails::get_device_proc_addr() {
     return get_context().renderer->vulkan_function_pointers.get_device_proc_addr;
 }
 
-
 void GpuScene::render(vk::CommandBuffer cmd) {
     cmd.drawIndexedIndirect(indirect_commands_buffer.buffer, 0, draw_count, sizeof(vk::DrawIndexedIndirectCommand));
 }
@@ -264,7 +263,7 @@ void Renderer::setup_scene() {
     material_set = descriptor_allocator->allocate("material_set", DescriptorLayout{{}, {
         DescriptorBinding{1, vk::DescriptorType::eStorageBuffer},
         DescriptorBinding{128, vk::DescriptorType::eCombinedImageSampler},
-    }, {}, 2, true}, 4, material_textures.size());
+    }, {}, 2, true}, 128, material_textures.size());
 
     material_set.update(0, 0, updates);
 }
@@ -491,7 +490,7 @@ bool Renderer::initialize_frame_resources() {
     descriptor_allocator = new DescriptorAllocator{device};
     global_set = descriptor_allocator->allocate("global_set", DescriptorLayout{{}, {
         DescriptorBinding{1, vk::DescriptorType::eUniformBuffer}
-    }, {}, 1, false}, 2);
+    }, {}, 1, false}, 8);
 
     return true;
 }
@@ -601,7 +600,6 @@ bool Renderer::initialize_render_passes() {
     global_buffer = Buffer{"global_ubo", vk::BufferUsageFlagBits::eUniformBuffer, true, std::as_bytes(std::span{global_buffer_size})};
     global_set.update(0, 0, {{&global_buffer}});
 
-
     #if 1
     const auto res_voxel_albedo = render_graph->add_resource(RGResource{"voxel_albedo", voxel_albedo});
     const auto res_voxel_normal = render_graph->add_resource(RGResource{"voxel_normal", voxel_normal});
@@ -609,6 +607,8 @@ bool Renderer::initialize_render_passes() {
     const auto res_color_attachment = render_graph->add_resource(RGResource{"color_attachment", Texture{}});
     const auto res_depth_attachment = render_graph->add_resource(RGResource{"depth_attachment", depth_texture});
     const auto res_radiance_sampler = render_graph->add_resource(RGResource{"radiance_sampler", radiance_sampler});
+
+    static bool once = true;
 
     const auto create_clear_pass = [&](RgResourceHandle resource) {
         RenderPass pass_clear;
@@ -623,6 +623,7 @@ bool Renderer::initialize_render_passes() {
                 }
             })
             .set_draw_func([rg = render_graph, resource](vk::CommandBuffer cmd) {
+                if(!once) { return; }
                 const auto& r = rg->get_resource(resource);
                 cmd.clearColorImage(std::get<1>(r.resource).first.image, vk::ImageLayout::eTransferDstOptimal, vk::ClearColorValue{0.0f, 0.0f, 0.0f, 0.0f}, vk::ImageSubresourceRange{vk::ImageAspectFlagBits::eColor, 0, vk::RemainingMipLevels, 0, vk::RemainingArrayLayers});
             });
@@ -656,6 +657,7 @@ bool Renderer::initialize_render_passes() {
             }
         })
         .set_draw_func([this](vk::CommandBuffer cmd) {
+            if(!once) { return; }
             render_scene.render(cmd);
         });
     render_graph->add_render_pass(pass_voxelization);
@@ -693,6 +695,7 @@ bool Renderer::initialize_render_passes() {
         })
         .set_sampler(res_radiance_sampler) 
         .set_draw_func([this](vk::CommandBuffer cmd) {
+            if(!once) { return; }
             cmd.dispatch(256/8, 256/8, 256/8);
         });
     render_graph->add_render_pass(pass_radiance_inject);
@@ -718,6 +721,7 @@ bool Renderer::initialize_render_passes() {
                 }
             })
             .set_draw_func([&, i](vk::CommandBuffer cmd) {
+                if(!once) { return; }
                 i32 mip_size = 256u >> i;
                 cmd.blitImage(voxel_radiance->image, vk::ImageLayout::eGeneral,
                     voxel_radiance->image, vk::ImageLayout::eGeneral,

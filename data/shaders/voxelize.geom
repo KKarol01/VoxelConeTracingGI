@@ -23,10 +23,7 @@ layout(location=0) out GS_OUT {
     flat uint instance_index;
 } geom;
 
-layout(set=0, binding=0) uniform GlobalUBO {
-	mat4 P;
-	mat4 V;
-};
+#include "global_set"
 
 void main(){
 	const vec3 p1 = vert[1].position_proj - vert[0].position_proj;

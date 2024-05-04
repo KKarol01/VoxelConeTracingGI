@@ -24,10 +24,8 @@ void main(){
 	vert.uv = uv;
 	vert.normal = normal;
 	vert.color = color;
-	vec3 _tang = vec3((vec4(tangent,0.0)));
-	vert.TBN = mat3(_tang, cross(normal, _tang), normal);
+	vert.TBN = mat3(tangent, cross(normal, tangent), normal);
     vert.instance_index = gl_InstanceIndex;
-
 	vert.position_proj = pos.xyz;
 	gl_Position = pos;
 }

@@ -313,6 +313,7 @@ void RenderGraph::create_rendering_resources() {
     }
 
     for(u32 i=0; i<descriptor_layouts.size(); ++i) {
+        if(descriptor_layouts.at(i).count == 0) { continue; }
         auto set = descriptor_allocator->allocate(*names.at(i), descriptor_layouts.at(i));
         renderpasses.at(i).descriptor = set;
         set.update(0, 0, descriptors.at(i));

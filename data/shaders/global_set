@@ -1,12 +1,4 @@
-struct PointLight {
-    vec3 pos;
-    vec3 col;
-    vec3 att; // [const, lin, quad, _]
-};
 layout(std140, set=0, binding=0) uniform GlobalUBO {
     mat4 P;
     mat4 V;
 };
-//layout(std140, set=0, binding=1) readonly buffer PointLightsSSBO {
-//    PointLight point_lights[];
-//};

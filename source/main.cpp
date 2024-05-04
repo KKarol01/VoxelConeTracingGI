@@ -27,8 +27,9 @@ int main() {
         return -1;
     }
 
-    // const auto gi_box = ctx.scene->load_model("data/models/gi_box.gltf");    
+    // const auto gi_box = ctx.scene->load_model("../../data/models/gi_box.gltf");    
     const auto sponza = ctx.scene->load_model("../../data/models/Sponza.gltf");    
+    // ctx.scene->add_model("gibox", gi_box);
     ctx.scene->add_model("sponza", sponza);
 
 

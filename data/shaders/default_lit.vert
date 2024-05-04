@@ -7,7 +7,6 @@ layout(location=3) in vec2 uv;
 layout(location=4) in vec3 tangent;
 
 layout(location=0) out VS_OUT {
-    // mat3 frag_TBN;
     vec3 frag_pos;
     vec3 frag_normal;
     vec3 frag_color;
@@ -19,12 +18,8 @@ layout(location=0) out VS_OUT {
 };
 
 #include "global_set"
-// layout(set=2, binding=0) readonly buffer ModelsSSBO {
-//     mat4 M[];
-// };
 
 void main() {
-    //gl_InstanceIndex;
     frag_pos = pos;
     frag_normal = normal;
     frag_color = color;
@@ -33,9 +28,6 @@ void main() {
     frag_bitan = cross(normal, tangent);
     frag_tbn = mat3(frag_tan, frag_bitan, frag_normal);
     frag_instance_index = gl_InstanceIndex;
-
-    // vec3 bitangent = cross(normal, tangent);
-    // frag_TBN = mat3(tangent, bitangent, normal);
 
     gl_Position = P * V * vec4(frag_pos, 1.0);
 }

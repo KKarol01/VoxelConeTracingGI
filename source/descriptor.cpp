@@ -98,7 +98,8 @@ DescriptorSet DescriptorAllocator::allocate(std::string_view label, const Descri
             pool->allocations++;
 
             const auto layout_idx = [&pools, this] {
-                for(u32 i = 0; i < this->pools.size(); ++i) { if(&this->pools.at(i) == pools) { return i; } } return 0u;
+                for(u32 i = 0; i < this->pools.size(); ++i) { if(&this->pools.at(i) == pools) { return i; } }
+                return 0u;
             }();
             const auto& allocation = allocations.emplace_back(layout_idx, pool->pool, variable_size);
 
@@ -157,12 +158,15 @@ DescriptorPool* DescriptorAllocator::create_pool(const DescriptorLayout& layout,
     }
     
     try {
+        auto pool = device.createDescriptorPool(vk::DescriptorPoolCreateInfo{
+            vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet | vk::DescriptorPoolCreateFlagBits::eUpdateAfterBind,
+            max_sets,
+            (u32)sizes.size(),
+            sizes.data()
+        });
+
         return &pools.pools.emplace_back(
-            device.createDescriptorPool(vk::DescriptorPoolCreateInfo{
-                vk::DescriptorPoolCreateFlagBits::eFreeDescriptorSet | vk::DescriptorPoolCreateFlagBits::eUpdateAfterBind,
-                max_sets,
-                sizes
-            }),
+            pool,
             max_sets,
             0
         );
