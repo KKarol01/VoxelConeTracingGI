@@ -491,12 +491,15 @@ bool Renderer::initialize_frame_resources() {
     global_set = descriptor_allocator->allocate("global_set", DescriptorLayout{{}, {
         DescriptorBinding{1, vk::DescriptorType::eUniformBuffer}
     }, {}, 1, false}, 8);
+    imgui_set = descriptor_allocator->allocate("imgui_set", DescriptorLayout{{}, {
+        DescriptorBinding{1, vk::DescriptorType::eCombinedImageSampler}
+    }, {}, 1, false}, 8);
 
     return true;
 }
 
 bool Renderer::initialize_imgui() {
-    #if 0
+    #if 1
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO(); (void)io;
@@ -507,13 +510,22 @@ bool Renderer::initialize_imgui() {
         spdlog::error("IMGUI: could not init glfw for vulkan");
         return false;
     }
+            
+    vk::DescriptorPoolSize sizes[] {
+        vk::DescriptorPoolSize{vk::DescriptorType::eCombinedImageSampler, 4u}
+    };
+
+    auto pool = device.createDescriptorPool(vk::DescriptorPoolCreateInfo{
+        {}, 4,     sizes
+        });
+
     ImGui_ImplVulkan_InitInfo init_info = {};
     init_info.Instance = instance;
     init_info.PhysicalDevice = physical_device;
     init_info.Device = device;
     init_info.QueueFamily = graphics_queue_idx;
     init_info.Queue = graphics_queue;
-    init_info.DescriptorPool = global_desc_pool;
+    init_info.DescriptorPool = pool;
     init_info.MinImageCount = swapchain_images.size();
     init_info.ImageCount = swapchain_images.size();
     init_info.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
@@ -589,8 +601,8 @@ bool Renderer::initialize_render_passes() {
     PipelineBuilder imgui_builder{this};
     pp_imgui = imgui_builder
         .with_vertex_input(common_input_bindings, common_input_attributes)
+        .with_depth_testing(false, false, vk::CompareOp::eAlways)
         .with_shaders({ "imgui.vert", "imgui.frag"})
-        .with_push_constant(0, 16u)
         .build_graphics("imgui_pipeline");
 
     glm::mat4 global_buffer_size[2];
@@ -768,6 +780,35 @@ bool Renderer::initialize_render_passes() {
         });
     render_graph->add_render_pass(pass_default_lit);
 
+    RenderPass pass_imgui;
+    pass_imgui
+        .set_name("pass imgui")
+        .set_pipeline(&pp_imgui)
+        .set_rendering_extent(RenderPassRenderingExtent{
+            .viewport = {0.0f, 768.0f, 1024.0f, -768.0f, 0.0f, 1.0f},
+            .scissor = {0, 0, 1024, 768}
+        })
+        .write_color_attachment(RPResource{
+            res_color_attachment,
+            RGSyncStage::ColorAttachmentOutput,
+            TextureInfo{
+                .required_layout = RGImageLayout::Attachment
+            },
+            RGAttachmentLoadStoreOp::Load
+        })
+        .set_draw_func([&](vk::CommandBuffer cmd) {
+            ImGui_ImplVulkan_NewFrame();
+            ImGui_ImplGlfw_NewFrame();
+            ImGui::NewFrame();
+
+            ImGui::Begin("asd");
+            ImGui::End();
+
+            ImGui::Render();
+            ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), get_frame_res().cmd);
+        });
+    render_graph->add_render_pass(pass_imgui);
+
     RenderPass pass_presentation;
     pass_presentation
         .set_name("presentation")
@@ -786,7 +827,7 @@ bool Renderer::initialize_render_passes() {
 }
 
 void Renderer::draw_ui(vk::CommandBuffer cmd, vk::ImageView swapchain_view) {
-    #if 0
+    #if 1
     cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, pp_imgui.pipeline);
     vk::RenderingAttachmentInfo color_view{
         swapchain_view,

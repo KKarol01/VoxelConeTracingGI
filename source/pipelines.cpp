@@ -9,7 +9,7 @@ static char* read_shader_file(const std::filesystem::path& path);
 static vk::ShaderStageFlagBits deduce_shader_type(const std::filesystem::path& path);
 static shaderc_shader_kind to_shaderc_type(vk::ShaderStageFlagBits stage);
 static std::vector<u32> compile_glsl_to_spv(const std::filesystem::path& path);
-static ShaderResources get_shader_resources(const std::vector<u32>& ir);
+static ShaderResources get_shader_resources(const std::vector<u32>& ir, vk::ShaderStageFlagBits type);
 
 Shader::Shader(vk::Device device, const std::filesystem::path& path) {
     const auto code = compile_glsl_to_spv(path);
@@ -20,7 +20,7 @@ Shader::Shader(vk::Device device, const std::filesystem::path& path) {
 
     set_debug_name(module, path.string());
 
-    resources = get_shader_resources(code);
+    resources = get_shader_resources(code, deduce_shader_type(path));
 }
 
 void build_layout(std::string_view label, vk::Device device, DescriptorLayout& layout) {
@@ -62,8 +62,8 @@ void build_layout(std::string_view label, vk::Device device, PipelineLayout& lay
         {},
         sets.size(),
         sets.data(),
-        layout.push_constants.size > 0ull ? 1u : 0u,
-        &layout.push_constants
+        layout.range.size > 0u ? 1u : 0u,
+        &layout.range
     });
 
     if(!label.empty()) { set_debug_name(layout.layout, label); }
@@ -242,6 +242,10 @@ PipelineLayout PipelineBuilder::coalesce_shader_resources_into_layout(const std:
 
             layout.count = std::max(layout.count, (u32)rs.size());
         }
+
+        pipeline_layout.range.stageFlags |= s.resources.range.stageFlags;
+        pipeline_layout.range.offset = std::max(pipeline_layout.range.offset, s.resources.range.offset);
+        pipeline_layout.range.size = std::max(pipeline_layout.range.size, s.resources.range.size);
     }
 
     return pipeline_layout;
@@ -254,7 +258,7 @@ static char* read_shader_file(const std::filesystem::path& path) {
     auto path_str = full_path.string();
     auto parent_path_str = shader_path.string();
     auto file = stb_include_file((char*) path_str.c_str(), 0, (char*)parent_path_str.c_str(), error);
-
+    
     if(error[0] != 0) {
         spdlog::error("stb_include: Error {}", error);
     }
@@ -296,7 +300,7 @@ static std::vector<u32> compile_glsl_to_spv(const std::filesystem::path& path) {
     return std::vector<u32>{result.begin(), result.end()};
 }
 
-static ShaderResources get_shader_resources(const std::vector<u32>& ir) {
+static ShaderResources get_shader_resources(const std::vector<u32>& ir, vk::ShaderStageFlagBits type) {
     spirv_cross::Compiler compiler{ir}; 
     const auto& resources = compiler.get_shader_resources();
 
@@ -306,7 +310,7 @@ static ShaderResources get_shader_resources(const std::vector<u32>& ir) {
         &resources.separate_samplers,
         &resources.uniform_buffers,
         &resources.storage_buffers,
-        &resources.sampled_images
+        &resources.sampled_images,
     };
 
     vk::DescriptorType resource_types[] {
@@ -315,10 +319,17 @@ static ShaderResources get_shader_resources(const std::vector<u32>& ir) {
         vk::DescriptorType::eSampler,
         vk::DescriptorType::eUniformBuffer,
         vk::DescriptorType::eStorageBuffer,
-        vk::DescriptorType::eCombinedImageSampler
+        vk::DescriptorType::eCombinedImageSampler,
     };
 
     ShaderResources shader_resources;
+
+    if(!resources.push_constant_buffers.empty()) {
+        shader_resources.range = vk::PushConstantRange{type, 0, 0};
+        for(const auto range : compiler.get_active_buffer_ranges(resources.push_constant_buffers.front().id)) {
+            shader_resources.range.size += range.range;
+        }
+    }
 
     for(u32 i=0; i<sizeof(resources_list)/sizeof(resources_list[0]); ++i) {
         auto* rs = resources_list[i];

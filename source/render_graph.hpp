@@ -144,8 +144,8 @@ struct RGResource {
 struct RPResource {
     RPResource(RgResourceHandle resource, RGSyncStage stage, const BufferInfo& info)
         : resource(resource), stage(stage), buffer_info(info) {}
-    RPResource(RgResourceHandle resource, RGSyncStage stage, const TextureInfo& info)
-        : resource(resource), stage(stage), texture_info(info) {}
+    RPResource(RgResourceHandle resource, RGSyncStage stage, const TextureInfo& info, RGAttachmentLoadStoreOp load_op = RGAttachmentLoadStoreOp::Clear, RGAttachmentLoadStoreOp store_op = RGAttachmentLoadStoreOp::Store)
+        : resource(resource), stage(stage), load_op(load_op), store_op(store_op), texture_info(info) {}
     // for samplers
     RPResource(RgResourceHandle resource): resource(resource) {}
     

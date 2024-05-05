@@ -114,7 +114,7 @@ public:
         PFN_vkGetDeviceProcAddr get_device_proc_addr;
     } vulkan_function_pointers;
     
-    DescriptorSet global_set, material_set;
+    DescriptorSet global_set, material_set, imgui_set;
     Texture3D voxel_albedo, voxel_normal, voxel_radiance;
     Texture2D depth_texture;
     Buffer global_buffer;

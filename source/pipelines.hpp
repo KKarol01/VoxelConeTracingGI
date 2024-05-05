@@ -37,7 +37,7 @@ struct PipelineLayout {
 
     vk::PipelineLayout layout;
     std::array<DescriptorLayout, MAX_SETS> sets{};
-    vk::PushConstantRange push_constants{};
+    vk::PushConstantRange range{};
 };
 
 struct ShaderResources {
@@ -48,6 +48,7 @@ struct ShaderResources {
     };
 
     std::array<std::vector<NamedBinding>, PipelineLayout::MAX_SETS> bindings{};
+    vk::PushConstantRange range;
 };
 
 struct Shader {
@@ -105,11 +106,6 @@ public:
         return *this;
     }
 
-    PipelineBuilder& with_push_constant(size_t offset, size_t size) {
-        push_constants.setOffset(offset).setSize(size);
-        return *this;
-    }
-
     PipelineBuilder& with_variable_upper_limits(std::array<u32, PipelineLayout::MAX_SETS> limits) {
         variable_limits = limits;
         return *this;
@@ -133,5 +129,4 @@ private:
     vk::CompareOp depth_compare{vk::CompareOp::eLess};
     std::vector<vk::Format> color_attachment_formats;
     vk::Format depth_attachment_format{vk::Format::eUndefined};
-    vk::PushConstantRange push_constants{};
 };
