@@ -23,23 +23,24 @@ layout(location=0) in FS_IN {
 
 layout(set=2, binding=0) uniform sampler3D voxel_radiance;
 
-const vec3 DIFFUSE_CONE_DIRECTIONS_16[16] = {
-    vec3( 0.57735,   0.57735,   0.57735  ),
-    vec3( 0.57735,  -0.57735,  -0.57735  ),
-    vec3(-0.57735,   0.57735,  -0.57735  ),
-    vec3(-0.57735,  -0.57735,   0.57735  ),
-    vec3(-0.903007, -0.182696, -0.388844 ),
-    vec3(-0.903007,  0.182696,  0.388844 ),
-    vec3( 0.903007, -0.182696,  0.388844 ),
-    vec3( 0.903007,  0.182696, -0.388844 ),
-    vec3(-0.388844, -0.903007, -0.182696 ),
-    vec3( 0.388844, -0.903007,  0.182696 ),
-    vec3( 0.388844,  0.903007, -0.182696 ),
-    vec3(-0.388844,  0.903007,  0.182696 ),
-    vec3(-0.182696, -0.388844, -0.903007 ),
-    vec3( 0.182696,  0.388844, -0.903007 ),
-    vec3(-0.182696,  0.388844,  0.903007 ),
-    vec3( 0.182696, -0.388844,  0.903007 )
+const vec3 diffuseConeDirections[] =
+{
+    vec3(0.0f, 1.0f, 0.0f),
+    vec3(0.0f, 0.5f, 0.866025f),
+    vec3(0.823639f, 0.5f, 0.267617f),
+    vec3(0.509037f, 0.5f, -0.7006629f),
+    vec3(-0.50937f, 0.5f, -0.7006629f),
+    vec3(-0.823639f, 0.5f, 0.267617f)
+};
+
+const float diffuseConeWeights[] =
+{
+    PI / 4.0f,
+    3.0f * PI / 20.0f,
+    3.0f * PI / 20.0f,
+    3.0f * PI / 20.0f,
+    3.0f * PI / 20.0f,
+    3.0f * PI / 20.0f,
 };
 
 vec3 position;
@@ -71,7 +72,7 @@ vec3 calc_direct_light() {
         float ldotp = max(dot(normal, light_dir), 0.0);
         float att = 1.0 / (pl.att[0] + pl.att[1]*dist + pl.att[2]*dist*dist);
 
-        diffuse += albedo * att * pl.col;
+        diffuse += albedo * att * pl.col.rgb * pl.col.a;
     }
 
     return ambient + diffuse + specular;
@@ -80,7 +81,7 @@ vec3 calc_direct_light() {
 vec4 DiffuseCone(const vec3 origin, const vec3 dir) {
     const float voxel_size = 2.0 / 256.0;
 	const float max_dist = 2.0;
-	const float apperture_angle = 0.4; // Angle in Radians.
+	const float apperture_angle = 0.25; // Angle in Radians.
 	float current_dist = voxel_size;
 	vec3 color = vec3(0.0);
 	float occlusion = 0.0;
@@ -98,7 +99,7 @@ vec4 DiffuseCone(const vec3 origin, const vec3 dir) {
 		float occlusion_read = voxel.a;
 
         color += (1.0 - occlusion) * color_read;
-        occlusion += (1.0 - occlusion) * occlusion_read / (1.0 + pow(current_coneDiameter, 16.0));
+        occlusion += (1.0 - occlusion) * occlusion_read / (1.0 + pow(current_dist, 16.0));
 
 		current_dist += max(current_coneDiameter, voxel_size);
 	}
@@ -154,21 +155,20 @@ vec4 indirectDiffuse() {
     vec3 up = cross(right, normal);
     vec4 diffuseTrace = vec4(0.0);
 
-    const int dir_count = 16;
-    const int dir_step = 4;
+    const int dir_count = 6;
+    const int dir_step = 1;
 
     for(int i = 0; i < dir_count; i += dir_step)
     {
         vec3 coneDirection = normal;
-        coneDirection += DIFFUSE_CONE_DIRECTIONS_16[i].x * right + DIFFUSE_CONE_DIRECTIONS_16[i].z * up;
+        coneDirection += diffuseConeDirections[i].x * right + diffuseConeDirections[i].z * up;
         coneDirection = normalize(coneDirection);
-        // diffuseTrace += DiffuseCone(origin, coneDirection);
-        diffuseTrace += DiffuseCone(origin, coneDirection) * max(0.0, dot(coneDirection, normal));
+        diffuseTrace += DiffuseCone(origin, coneDirection) * diffuseConeWeights[i];
     }
     diffuseTrace *= float(dir_step) / float(dir_count);
     diffuseTrace.rgb *= albedo;
     vec3 res = diffuseTrace.rgb;
-    return vec4(res, clamp(1.0 - diffuseTrace.a, 0.0, 1.0));
+    return vec4(res, clamp(1.0 - (diffuseTrace.a + 0.01), 0.0, 1.0));
 } 
 
 float calc_occlusion(vec3 ro, vec3 rd, const float max_dist) {
@@ -189,7 +189,7 @@ float calc_occlusion(vec3 ro, vec3 rd, const float max_dist) {
 		vec3 color_read = voxel.rgb;
 		float occlusion_read = voxel.a;
 
-        occlusion += (1.0 - occlusion) * occlusion_read / pow((1.0 + current_coneDiameter), 2.0);
+        occlusion += (1.0 - occlusion) * occlusion_read / (1.0 + current_dist);
 
 		current_dist += max(current_coneDiameter, voxel_size);
 	}
@@ -211,20 +211,18 @@ void main() {
 
     vec3 view_pos = vec3(V * vec4(0.0, 0.0, 0.0, 1.0));
     vec4 indirect = indirectDiffuse();
-    indirect *= 4.0;
     vec3 direct = calc_direct_light();
 
-
-    const vec3 p = position + normal * (2.0 / 256.0);
+    const vec3 p = position;
     const vec3 l = point_lights[0].pos;
     vec3 pl = l - p;
     const float pld = length(pl);
     pl /= pld;
     const float occ = calc_occlusion(p, pl, pld) * clamp(dot(pl, normal), 0.0, 1.0);
 
-    const vec4 specular = specular_cone(p, normal);
+    const vec4 specular = vec4(0.0);
 
-    vec3 final = (direct.rgb * occ + indirect.rgb + specular.rgb);
-
+    vec3 final = (direct.rgb * occ + indirect.rgb * 1.0) * indirect.a;
+    final = final / (final + 1.0);
     outColor = vec4(final, 1.0);
 }

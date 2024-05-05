@@ -17,44 +17,26 @@ vec3 to_voxel_space(vec3 p) {
     return (p*0.5+0.5);
 } 
 
-float TraceShadow(vec3 position, vec3 direction, float maxTracingDistance) {
-    // scaling factor
-    float traceShadowHit = 0.8;
-    float volumeDimension = 256.0;
-    float k = traceShadowHit;
-    // navigation
-    float voxelTexSize = 2.0 / volumeDimension;
-    // move one voxel further to avoid self collision
-    float dst = voxelTexSize * 2.0;
-    position += direction * dst;
-    vec3 cpos = position;
-    vec3 samplePos = cpos;
-    samplePos = to_voxel_space(samplePos);
+float calc_occlusion(vec3 ro, vec3 rd, const float max_dist) {
+    const float voxel_size = 2.0 / 256.0;
+	float current_dist = voxel_size;
+    const float apperture_angle = 0.55;
+	float occlusion = 0.0;
     
-    // control variables
-    float visibility = 0.0;
-    // accumulated sample
-    float traceSample = 0.0;
+	while(current_dist <= max_dist && occlusion < 1.0) {
+		float current_coneDiameter = 2.0 * current_dist * tan(apperture_angle * 0.5);
+		vec3 pos_worldspace = ro + rd * current_dist;
 
-    while (visibility <= 1.0 && dst <= maxTracingDistance) 
-    {
-        if (samplePos.x < 0.0 || samplePos.y < 0.0 || samplePos.z < 0.0
-            || samplePos.x > 1.0 || samplePos.y > 1.0 || samplePos.z > 1.0) { 
-            break; 
-        }
-        
-        traceSample = ceil(textureLod(sampler3D(voxel_albedo, voxel_sampler), samplePos, 0.0).a) * k;
+        vec3 pos_texturespace = pos_worldspace * 0.5 + 0.5; // [-1,1] coordinates to [0,1]
+		vec4 voxel = textureLod(sampler3D(voxel_albedo, voxel_sampler), pos_texturespace, 0.0);	// Sample
+		float occlusion_read = voxel.a;
 
-        if(traceSample > 1.0 - EPSILON) { return 0.0; }
+        occlusion += (1.0 - occlusion) * occlusion_read;
 
-        visibility += (1.0 - visibility) * traceSample * dst;
+		current_dist += max(voxel_size, voxel_size);
+	}
 
-        dst += voxelTexSize;
-        cpos = position + direction * dst;
-        samplePos = to_voxel_space(cpos);
-    }
-
-    return max(1.0 - visibility, 0.0);
+    return clamp(1.0 - occlusion, 0.0, 1.0);
 }
 
 vec3 world_to_voxel(vec3 p) {
@@ -69,7 +51,7 @@ void main() {
     }
 
     ivec3 write_pos = ivec3(gl_GlobalInvocationID.xyz);
-    vec3 normal = imageLoad(voxel_normal, write_pos).rgb * 2.0 - 1.0;
+    vec3 normal = normalize(imageLoad(voxel_normal, write_pos).rgb) * 2.0 - 1.0;
     vec4 albedo = texelFetch(voxel_albedo, write_pos, 0);
 
     if(albedo.a < 1e-6) { return; }
@@ -78,19 +60,17 @@ void main() {
     if(dot(albedo, albedo) > 0.0) {
         vec3 world_pos = vec3(write_pos) / 255.0; // 0-1
         world_pos = world_pos * 2.0 - 1.0; // real in-game range of voxelized space
-        float voxel_size = 2.0 / 256.0; // -1 - +1 in 256 resolution
+        const float voxel_size = 2.0 / 256.0; // -1 - +1 in 256 resolution
 
         PointLight pl = point_lights[0];
         vec3 ldir = pl.pos - world_pos;
-        float dist = distance(pl.pos, world_pos);
+        float dist = length(ldir);
         ldir /= dist;
 
-        float att = pl.att[0] + pl.att[1] * dist + pl.att[2] * dist * dist;
-        float visibility = TraceShadow(world_pos, ldir, dist);
-        float ndotl = max(0.0, dot(normalize(pl.pos - world_pos), normal));
-        vec3 res = albedo.rgb * ndotl * pl.col * visibility * att;
-        light = vec4(res, visibility);
+        float att = 1.0 / (pl.att[0] + pl.att[1] * dist + pl.att[2] * dist * dist);
+        float visibility = calc_occlusion(world_pos, ldir, dist);
+        vec3 res = albedo.rgb * pl.col.rgb * pl.col.a * att * visibility;
+        light = vec4(res, 1.0);
     }
-    
     imageStore(voxel_radiance, write_pos, light);
 }

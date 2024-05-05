@@ -586,15 +586,12 @@ bool Renderer::initialize_render_passes() {
         .with_variable_upper_limits({128})
         .build_compute("merge_voxels_pipeline");
 
-    // PipelineBuilder imgui_builder{this};
-    // pp_imgui = imgui_builder
-    //     .with_vertex_input(common_input_bindings, common_input_attributes)
-    //     .with_shaders({
-    //         {vk::ShaderStageFlagBits::eVertex, &shaders.at(6)},
-    //         {vk::ShaderStageFlagBits::eFragment, &shaders.at(7)},
-    //     })
-    //     .with_push_constant(0, 16u)
-    //     .build_graphics("imgui_pipeline");
+    PipelineBuilder imgui_builder{this};
+    pp_imgui = imgui_builder
+        .with_vertex_input(common_input_bindings, common_input_attributes)
+        .with_shaders({ "imgui.vert", "imgui.frag"})
+        .with_push_constant(0, 16u)
+        .build_graphics("imgui_pipeline");
 
     glm::mat4 global_buffer_size[2];
     global_buffer = Buffer{"global_ubo", vk::BufferUsageFlagBits::eUniformBuffer, true, std::as_bytes(std::span{global_buffer_size})};
