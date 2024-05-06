@@ -18,23 +18,29 @@ vec3 to_voxel_space(vec3 p) {
 } 
 
 float calc_occlusion(vec3 ro, vec3 rd, const float max_dist) {
-    const float voxel_size = 2.0 / 256.0;
+    const float voxel_size = gi_settings.voxel_size;
 	float current_dist = voxel_size;
-    const float apperture_angle = 0.55;
+    const float apperture_angle = gi_settings.occlusion_cone_aperture;
 	float occlusion = 0.0;
     
 	while(current_dist <= max_dist && occlusion < 1.0) {
 		float current_coneDiameter = 2.0 * current_dist * tan(apperture_angle * 0.5);
 		vec3 pos_worldspace = ro + rd * current_dist;
 
+        float vlevel = log2(current_coneDiameter / voxel_size); // Current mipmap level
+        vlevel = min(8.0, max(vlevel, 0.0));
+
         vec3 pos_texturespace = pos_worldspace * 0.5 + 0.5; // [-1,1] coordinates to [0,1]
-		vec4 voxel = textureLod(sampler3D(voxel_albedo, voxel_sampler), pos_texturespace, 0.0);	// Sample
+		vec4 voxel = textureLod(sampler3D(voxel_albedo, voxel_sampler), pos_texturespace, vlevel);	// Sample
+		vec3 color_read = voxel.rgb;
 		float occlusion_read = voxel.a;
 
-        occlusion += (1.0 - occlusion) * occlusion_read;
+        occlusion += (1.0 - occlusion) * occlusion_read / (1.0 + current_dist);
 
-		current_dist += max(voxel_size, voxel_size);
+		current_dist += max(current_coneDiameter, voxel_size);
 	}
+
+    if(gi_settings.merge_voxels_calc_occlusion == 0) { occlusion *= 0.0; }
 
     return clamp(1.0 - occlusion, 0.0, 1.0);
 }

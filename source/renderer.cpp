@@ -310,8 +310,6 @@ void Renderer::render() {
 
     render_graph->render(cmd, swapchain_images.at(img), swapchain_views.at(img));
 
-    // draw_ui(cmd, swapchain_views.at(img));
-
     cmd.end();
     vk::PipelineStageFlags wait_masks[] {
         vk::PipelineStageFlagBits::eColorAttachmentOutput
@@ -489,11 +487,16 @@ bool Renderer::initialize_frame_resources() {
 
     descriptor_allocator = new DescriptorAllocator{device};
     global_set = descriptor_allocator->allocate("global_set", DescriptorLayout{{}, {
-        DescriptorBinding{1, vk::DescriptorType::eUniformBuffer}
-    }, {}, 1, false}, 8);
+        DescriptorBinding{1, vk::DescriptorType::eUniformBuffer},
+        DescriptorBinding{1, vk::DescriptorType::eUniformBuffer},
+    }, {}, 2, false}, 8);
     imgui_set = descriptor_allocator->allocate("imgui_set", DescriptorLayout{{}, {
         DescriptorBinding{1, vk::DescriptorType::eCombinedImageSampler}
     }, {}, 1, false}, 8);
+
+    gi_settings_buffer = Buffer{"gi_settings_buffer", vk::BufferUsageFlagBits::eUniformBuffer, true, sizeof(GlobalIlluminationSettings)};
+    new(gi_settings_buffer->data) GlobalIlluminationSettings{};
+    gi_settings = static_cast<GlobalIlluminationSettings*>(gi_settings_buffer->data);
 
     return true;
 }
@@ -607,7 +610,7 @@ bool Renderer::initialize_render_passes() {
 
     glm::mat4 global_buffer_size[2];
     global_buffer = Buffer{"global_ubo", vk::BufferUsageFlagBits::eUniformBuffer, true, std::as_bytes(std::span{global_buffer_size})};
-    global_set.update(0, 0, {{&global_buffer}});
+    global_set.update(0, 0, {{&global_buffer}, {&gi_settings_buffer}});
 
     #if 1
     const auto res_voxel_albedo = render_graph->add_resource(RGResource{"voxel_albedo", voxel_albedo});
@@ -704,7 +707,7 @@ bool Renderer::initialize_render_passes() {
         })
         .set_sampler(res_radiance_sampler) 
         .set_draw_func([this](vk::CommandBuffer cmd) {
-            if(!once) { return; }
+            cmd.bindDescriptorSets(vk::PipelineBindPoint::eCompute, pp_merge_voxels.layout.layout, 0, global_set.set, {});
             cmd.dispatch(256/8, 256/8, 256/8);
         });
     render_graph->add_render_pass(pass_radiance_inject);
@@ -802,6 +805,18 @@ bool Renderer::initialize_render_passes() {
             ImGui::NewFrame();
 
             ImGui::Begin("asd");
+            if(ImGui::CollapsingHeader("gi_settings", ImGuiTreeNodeFlags_DefaultOpen)) {
+                ImGui::SliderFloat("voxel_resolution",                 &gi_settings->voxel_resolution, 1.0f, 512.0f);
+                ImGui::SliderFloat("voxel_area",                       &gi_settings->voxel_area, 0.0f, 512.0f);
+                ImGui::SliderFloat("voxel_size",                       &gi_settings->voxel_size, 0.0f, 100.0f);
+                ImGui::SliderFloat("trace_distance",                   &gi_settings->trace_distance, 0.0f, 512.0f);
+                ImGui::SliderFloat("diffuse_cone_aperture",            &gi_settings->diffuse_cone_aperture, 0.0f, glm::pi<float>());
+                ImGui::SliderFloat("specular_cone_aperture",           &gi_settings->specular_cone_aperture, 0.0f, glm::pi<float>());
+                ImGui::SliderFloat("occlusion_cone_aperture",          &gi_settings->occlusion_cone_aperture, 0.0f, glm::pi<float>());
+                ImGui::Checkbox("merge_voxels_calc_occlusion",         reinterpret_cast<bool*>(&gi_settings->merge_voxels_calc_occlusion));
+                ImGui::Checkbox("lighting_use_merge_voxels_occlusion", reinterpret_cast<bool*>(&gi_settings->lighting_use_merge_voxels_occlusion));
+                ImGui::Checkbox("lighting_calc_occlusion",             reinterpret_cast<bool*>(&gi_settings->lighting_calc_occlusion));
+            }
             ImGui::End();
 
             ImGui::Render();
@@ -824,70 +839,4 @@ bool Renderer::initialize_render_passes() {
     #endif
 
     return true;
-}
-
-void Renderer::draw_ui(vk::CommandBuffer cmd, vk::ImageView swapchain_view) {
-    #if 1
-    cmd.bindPipeline(vk::PipelineBindPoint::eGraphics, pp_imgui.pipeline);
-    vk::RenderingAttachmentInfo color_view{
-        swapchain_view,
-        vk::ImageLayout::eColorAttachmentOptimal,
-        {},
-        {},
-        {},
-        vk::AttachmentLoadOp::eLoad,
-        vk::AttachmentStoreOp::eStore
-    };
-    cmd.beginRendering(vk::RenderingInfo{{}, {{}, {1024, 768}}, 1, 0, color_view});
-    
-    ImGui_ImplVulkan_NewFrame();
-    ImGui_ImplGlfw_NewFrame();
-    ImGui::NewFrame();
-
-    static auto scene_width = 250u;
-    const auto scene_flags = 
-        ImGuiWindowFlags_NoCollapse |
-        ImGuiWindowFlags_NoScrollbar |
-        ImGuiWindowFlags_NoMove;
-    ImGui::SetNextWindowPos(ImVec2(window_width - scene_width, 0));
-    ImGui::SetNextWindowSize(ImVec2(scene_width, window_height));
-    ImGui::Begin("Scene", 0, scene_flags);
-    // for(u32 i=0; i<render_scene.models.size(); ++i) {
-    //     auto &model = render_scene.models.at(i);
-    //     if(ImGui::TreeNode(std::format("{}##_{}", model.mesh->name, i).c_str())) {
-    //         if(ImGui::CollapsingHeader("material")) {
-    //             bool modified = false;
-    //             ImGui::PushItemWidth(150.0f);
-    //             // modified |= ImGui::SliderFloat("ambient_strength", &model.mesh->material.ambient_color.w, 0.0f, 2.0f);
-    //             // modified |= ImGui::ColorEdit3("ambient_color", &model.mesh->material.ambient_color.x);
-    //             // ImGui::Dummy({1.0f, 5.0f});
-    //             // modified |= ImGui::SliderFloat("diffuse_strength", &model.mesh->material.diffuse_color.w, 0.0f, 2.0f);
-    //             // modified |= ImGui::ColorEdit3("diffuse_color", &model.mesh->material.diffuse_color.x);
-    //             // ImGui::Dummy({1.0f, 5.0f});
-    //             // modified |= ImGui::SliderFloat("specular_strength", &model.mesh->material.specular_color.w, 0.0f, 2.0f);
-    //             // modified |= ImGui::ColorEdit3("specular_color", &model.mesh->material.specular_color.x);
-    //             // ImGui::PopItemWidth();
-
-    //             if(modified) {
-    //                 // Material* materials = (Material*)scene.material_buffer->data;
-    //                 // memcpy(&materials[i], &model.mesh->material, sizeof(Material));
-    //             }
-    //         }
-    //         ImGui::TreePop();
-    //     }
-    // }
-    scene_width = ImGui::GetWindowWidth();
-    ImGui::End();
-
-    ImGui::Begin("Shaders");
-    if(ImGui::Button("Recompile default lit")) {
-        recompile_pipelines = true;
-    }
-    ImGui::End();
-
-    ImGui::Render();
-    ImGui_ImplVulkan_RenderDrawData(ImGui::GetDrawData(), get_frame_res().cmd);
-
-    cmd.endRendering();
-    #endif
 }

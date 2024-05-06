@@ -79,9 +79,9 @@ vec3 calc_direct_light() {
 }
 
 vec4 DiffuseCone(const vec3 origin, const vec3 dir) {
-    const float voxel_size = 2.0 / 256.0;
-	const float max_dist = 2.0;
-	const float apperture_angle = 0.25; // Angle in Radians.
+    const float voxel_size = gi_settings.voxel_size;
+	const float max_dist = gi_settings.trace_distance;
+	const float apperture_angle = gi_settings.diffuse_cone_aperture;
 	float current_dist = voxel_size;
 	vec3 color = vec3(0.0);
 	float occlusion = 0.0;
@@ -103,12 +103,46 @@ vec4 DiffuseCone(const vec3 origin, const vec3 dir) {
 
 		current_dist += max(current_coneDiameter, voxel_size);
 	}
+    
 	return vec4(color, occlusion);
 }
 
+vec4 indirectDiffuse() {
+    const float voxel_size = gi_settings.voxel_size;
+	const vec3 origin = frag_pos + normal * voxel_size;
+
+    vec3 guide = vec3(0.0, 1.0, 0.0);
+
+    if (abs(dot(normal,guide)) > 0.99) {
+        guide = vec3(0.0, 0.0, 1.0);
+    }
+
+    vec3 right = normalize(guide - dot(normal, guide) * normal);
+    vec3 up = cross(right, normal);
+    vec4 diffuseTrace = vec4(0.0);
+
+    const int dir_count = 6;
+    const int dir_step = 1;
+
+    for(int i = 0; i < dir_count; i += dir_step)
+    {
+        vec3 coneDirection = normal;
+        coneDirection += diffuseConeDirections[i].x * right + diffuseConeDirections[i].z * up;
+        coneDirection = normalize(coneDirection);
+        diffuseTrace += DiffuseCone(origin, coneDirection) * diffuseConeWeights[i];
+    }
+    diffuseTrace *= float(dir_step) / float(dir_count);
+    diffuseTrace.rgb *= albedo;
+    vec3 res = diffuseTrace.rgb;
+    
+    if(gi_settings.lighting_use_merge_voxels_occlusion == 0) { diffuseTrace.a *= 0.0; }
+
+    return vec4(res, clamp(1.0 - diffuseTrace.a, 0.0, 1.0));
+} 
+
 vec4 specular_cone(const vec3 origin, const vec3 dir) {
-    const float voxel_size = 2.0 / 256.0;
-	float max_dist = 2.0;
+    const float voxel_size = gi_settings.voxel_size;
+	float max_dist = gi_settings.trace_distance;
 	float current_dist = voxel_size;
     float apperture_angle = 0.08;
 	vec3 color = vec3(0.0);
@@ -140,41 +174,10 @@ vec4 specular_cone(const vec3 origin, const vec3 dir) {
 	return vec4(color * strength, occlusion);  
 }
 
-vec4 indirectDiffuse() {
-    const float voxel_size = 2.0 / 256.0;
-	const vec3 origin = frag_pos + normal * voxel_size;
-
-    vec3 guide = vec3(0.0, 1.0, 0.0);
-
-    if (abs(dot(normal,guide)) > 0.99) {
-        guide = vec3(0.0, 0.0, 1.0);
-    }
-
-    // Find a tangent and a bitangent
-    vec3 right = normalize(guide - dot(normal, guide) * normal);
-    vec3 up = cross(right, normal);
-    vec4 diffuseTrace = vec4(0.0);
-
-    const int dir_count = 6;
-    const int dir_step = 1;
-
-    for(int i = 0; i < dir_count; i += dir_step)
-    {
-        vec3 coneDirection = normal;
-        coneDirection += diffuseConeDirections[i].x * right + diffuseConeDirections[i].z * up;
-        coneDirection = normalize(coneDirection);
-        diffuseTrace += DiffuseCone(origin, coneDirection) * diffuseConeWeights[i];
-    }
-    diffuseTrace *= float(dir_step) / float(dir_count);
-    diffuseTrace.rgb *= albedo;
-    vec3 res = diffuseTrace.rgb;
-    return vec4(res, clamp(1.0 - (diffuseTrace.a + 0.01), 0.0, 1.0));
-} 
-
 float calc_occlusion(vec3 ro, vec3 rd, const float max_dist) {
-    const float voxel_size = 2.0 / 256.0;
+    const float voxel_size = gi_settings.voxel_size;
 	float current_dist = voxel_size;
-    const float apperture_angle = 0.01;
+    const float apperture_angle = gi_settings.occlusion_cone_aperture;
 	float occlusion = 0.0;
     
 	while(current_dist < max_dist && occlusion < 1.0) {
@@ -213,14 +216,15 @@ void main() {
     vec4 indirect = indirectDiffuse();
     vec3 direct = calc_direct_light();
 
-    const vec3 p = position;
-    const vec3 l = point_lights[0].pos;
-    vec3 pl = l - p;
-    const float pld = length(pl);
-    pl /= pld;
-    const float occ = calc_occlusion(p, pl, pld) * clamp(dot(pl, normal), 0.0, 1.0);
-
-    const vec4 specular = vec4(0.0);
+    float occ = 1.0;
+    if(gi_settings.lighting_calc_occlusion == 1) {
+        const vec3 p = position;
+        const vec3 l = point_lights[0].pos;
+        vec3 pl = l - p;
+        const float pld = length(pl);
+        pl /= pld;
+        occ = calc_occlusion(p, pl, pld) * clamp(dot(pl, normal), 0.0, 1.0);
+    }
 
     vec3 final = (direct.rgb * occ + indirect.rgb * 1.0) * indirect.a;
     final = final / (final + 1.0);

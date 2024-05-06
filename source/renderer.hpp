@@ -44,6 +44,19 @@ struct GpuScene {
     u32 draw_count; 
 };
 
+struct GlobalIlluminationSettings {
+    float voxel_resolution{256.0f};
+    float voxel_area{2.0f}; // from -1 to 1 would be 2
+    float voxel_size{2.0f / 256.0f}; // area / res
+    float trace_distance{2.0f}; // [0, res*sqrt(2)]
+    float diffuse_cone_aperture{0.25};
+    float specular_cone_aperture{0.08f};
+    float occlusion_cone_aperture{0.08f};
+    int merge_voxels_calc_occlusion{1};
+    int lighting_use_merge_voxels_occlusion{1};
+    int lighting_calc_occlusion{1};
+};
+
 inline vk::ImageViewType to_vk_view_type(vk::ImageType type) {
     switch (type) {
         case vk::ImageType::e1D: { return vk::ImageViewType::e1D; }
@@ -87,7 +100,6 @@ private:
     bool initialize_render_passes();
 
     void load_waiting_textures(vk::CommandBuffer cmd);
-    void draw_ui(vk::CommandBuffer cmd, vk::ImageView swapchain_view);
 
     FrameResources& get_frame_res() { return frames.at(frame_number % FRAMES_IN_FLIGHT); }
 
@@ -117,7 +129,8 @@ public:
     DescriptorSet global_set, material_set, imgui_set;
     Texture3D voxel_albedo, voxel_normal, voxel_radiance;
     Texture2D depth_texture;
-    Buffer global_buffer;
+    Buffer global_buffer, gi_settings_buffer;
+    GlobalIlluminationSettings* gi_settings;
 
     Pipeline pp_default_lit;
     Pipeline pp_voxelize;
