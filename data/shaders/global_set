@@ -11,6 +11,9 @@ struct GlobalIlluminationSettings {
     float diffuse_cone_aperture;
     float specular_cone_aperture;
     float occlusion_cone_aperture;
+    float aoAlpha;
+    float aoFalloff;
+    float traceShadowHit;
     int merge_voxels_calc_occlusion;
     int lighting_use_merge_voxels_occlusion;
     int lighting_calc_occlusion;
@@ -18,4 +21,12 @@ struct GlobalIlluminationSettings {
 
 layout(std140, set=0, binding=1) uniform GlobalIlluminationSettingsUBO {
     GlobalIlluminationSettings gi_settings;
+};
+
+#include "lights"
+layout(std140, set=0, binding=2) uniform LightsUBO {
+    uint point_light_count;
+    uint direction_light_count;
+    PointLight point_lights[8];
+    DirectionLight direction_lights[8];
 };

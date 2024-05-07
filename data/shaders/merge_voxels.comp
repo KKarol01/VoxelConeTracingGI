@@ -4,79 +4,142 @@
 layout(local_size_x=8, local_size_y=8, local_size_z=8) in;
 
 #include "global_set"
-#include "point_lights"
 
 layout(set=2, binding=0) uniform texture3D voxel_albedo;
 layout(set=2, binding=1, rgba8) uniform image3D voxel_normal;
 layout(set=2, binding=2, rgba8) uniform writeonly image3D voxel_radiance;
 layout(set=2, binding=3) uniform sampler voxel_sampler;
 
-const float EPSILON = 1e-30;
+const float PI = 3.14159265;
+const float EPSILON = 1e-12;
 
-vec3 to_voxel_space(vec3 p) {
-    return (p*0.5+0.5);
-} 
+vec3 VoxelToWorld(ivec3 pos)
+{
+    vec3 result = vec3(pos);
+    result *= gi_settings.voxel_size; // pos: [0, 255] * 2/256 -> [0, ~2] - 1 -> [-1 - +1] -> assumed scene boundary
 
-float calc_occlusion(vec3 ro, vec3 rd, const float max_dist) {
-    const float voxel_size = gi_settings.voxel_size;
-	float current_dist = voxel_size;
-    const float apperture_angle = gi_settings.occlusion_cone_aperture;
-	float occlusion = 0.0;
-    
-	while(current_dist <= max_dist && occlusion < 1.0) {
-		float current_coneDiameter = 2.0 * current_dist * tan(apperture_angle * 0.5);
-		vec3 pos_worldspace = ro + rd * current_dist;
-
-        float vlevel = log2(current_coneDiameter / voxel_size); // Current mipmap level
-        vlevel = min(8.0, max(vlevel, 0.0));
-
-        vec3 pos_texturespace = pos_worldspace * 0.5 + 0.5; // [-1,1] coordinates to [0,1]
-		vec4 voxel = textureLod(sampler3D(voxel_albedo, voxel_sampler), pos_texturespace, vlevel);	// Sample
-		vec3 color_read = voxel.rgb;
-		float occlusion_read = voxel.a;
-
-        occlusion += (1.0 - occlusion) * occlusion_read / (1.0 + current_dist);
-
-		current_dist += max(current_coneDiameter, voxel_size);
-	}
-
-    if(gi_settings.merge_voxels_calc_occlusion == 0) { occlusion *= 0.0; }
-
-    return clamp(1.0 - occlusion, 0.0, 1.0);
+    return result - 1.0;
 }
 
-vec3 world_to_voxel(vec3 p) {
-    return (p*0.5+0.5);
+vec3 WorldToVoxel(vec3 position)
+{
+    vec3 voxelPos = position * 0.5 + 0.5; // position: [-1 - +1]*0.5+0.5 -> [0 - 1]*vxscale -> [0, 256]
+    return voxelPos;
+}
+
+float TraceShadow(vec3 position, vec3 direction, float maxTracingDistance) 
+{
+    float traceShadowHit = gi_settings.traceShadowHit;
+    float k = traceShadowHit * traceShadowHit;
+    float voxelTexSize = gi_settings.voxel_size;
+    float dst = voxelTexSize * 1.0;
+    vec3 samplePos = direction * dst + position;
+    float visibility = 0.0;
+    float traceSample = 0.0;
+
+    while (visibility <= 1.0 && dst <= maxTracingDistance) 
+    {
+        if (samplePos.x < 0.0 || samplePos.y < 0.0 || samplePos.z < 0.0
+            || samplePos.x > 1.0 || samplePos.y > 1.0 || samplePos.z > 1.0) 
+        { 
+            break; 
+        }
+        
+        traceSample = ceil(texture(sampler3D(voxel_albedo, voxel_sampler), samplePos).a) * k;
+
+        // hard shadows mode
+        if(traceSample > 1.0 - EPSILON) { return 0.0; }
+
+        // accumulate
+        visibility += (1.0 - visibility) * traceSample / (1.0 + dst);
+        // move further into volume
+        dst += voxelTexSize;
+        samplePos = direction * dst + position;
+    }
+
+    return 1.0 - visibility;
+}
+
+vec3 BRDF(DirectionLight light, vec3 normal, vec3 albedo)
+{
+    float nDotL = 0.0;
+
+    // if(normalWeightedLambert == 1)
+    if(0 == 1)
+    {
+    }
+    else
+    {
+        nDotL = max(dot(normal, light.dir), 0.0);
+    }
+
+    return light.col.rgb * albedo * nDotL * light.col.a;
+}
+
+vec4 CalculateDirectional(DirectionLight light, vec3 normal, vec3 position, vec3 albedo)
+{
+    float visibility = 1.0;
+
+    vec3 voxelPos = WorldToVoxel(position);
+    visibility = TraceShadow(voxelPos, light.dir, gi_settings.trace_distance);
+
+    if(visibility == 0.0) return vec4(0.0); 
+
+    return vec4(BRDF(light, normal, albedo) * visibility, visibility);
+}
+
+vec4 CalculateDirectLighting(vec3 position, vec3 normal, vec3 albedo)
+{
+    normal = normalize(normal);
+    float voxelWorldSize = gi_settings.voxel_size;
+    vec4 directLighting = vec4(0.0, 0.0, 0.0, 0.0);
+    vec4 current =  vec4(0.0); int count = 0;
+    position = position + normal * voxelWorldSize;
+
+    for(int i = 0; i < direction_light_count; ++i)
+    {
+        current = CalculateDirectional(direction_lights[i], normal, position, albedo);
+        directLighting.rgb += current.rgb;
+        directLighting.a += current.a; count++;
+    }
+
+    if(count > 0) { directLighting.a /= count; }
+
+    return directLighting;
+}
+
+vec3 EncodeNormal(vec3 normal)
+{
+    return normal * 0.5f + vec3(0.5f);
+}
+
+vec3 DecodeNormal(vec3 normal)
+{
+    return normal * 2.0 - vec3(1.0);
 }
 
 void main() {
-    if(gl_GlobalInvocationID.x >= 256
-        || gl_GlobalInvocationID.y >= 256
-        || gl_GlobalInvocationID.z >= 256) {
-            return;
+    if(    gl_GlobalInvocationID.x >= gi_settings.voxel_resolution
+        || gl_GlobalInvocationID.y >= gi_settings.voxel_resolution
+        || gl_GlobalInvocationID.z >= gi_settings.voxel_resolution) { return; }
+
+    ivec3 writePos = ivec3(gl_GlobalInvocationID);
+	vec4 albedo = texelFetch(voxel_albedo, writePos, 0);
+
+    if(albedo.a < EPSILON) { return; }
+
+    albedo.a = 0.0;
+    vec3 baseNormal = imageLoad(voxel_normal, writePos).xyz;
+    vec3 normal = DecodeNormal(baseNormal);
+
+    if(any(greaterThan(albedo.rgb, vec3(0.0))))
+    {
+        vec3 wsPosition = VoxelToWorld(writePos);
+        albedo = CalculateDirectLighting(wsPosition, normal, albedo.rgb);
     }
 
-    ivec3 write_pos = ivec3(gl_GlobalInvocationID.xyz);
-    vec3 normal = normalize(imageLoad(voxel_normal, write_pos).rgb) * 2.0 - 1.0;
-    vec4 albedo = texelFetch(voxel_albedo, write_pos, 0);
+    imageStore(voxel_normal, writePos, vec4(baseNormal, albedo.a));
+    albedo.a = 1.0;
 
-    if(albedo.a < 1e-6) { return; }
-
-    vec4 light = vec4(0.0);
-    if(dot(albedo, albedo) > 0.0) {
-        vec3 world_pos = vec3(write_pos) / 255.0; // 0-1
-        world_pos = world_pos * 2.0 - 1.0; // real in-game range of voxelized space
-        const float voxel_size = 2.0 / 256.0; // -1 - +1 in 256 resolution
-
-        PointLight pl = point_lights[0];
-        vec3 ldir = pl.pos - world_pos;
-        float dist = length(ldir);
-        ldir /= dist;
-
-        float att = 1.0 / (pl.att[0] + pl.att[1] * dist + pl.att[2] * dist * dist);
-        float visibility = calc_occlusion(world_pos, ldir, dist);
-        vec3 res = albedo.rgb * pl.col.rgb * pl.col.a * att * visibility;
-        light = vec4(res, 1.0);
-    }
-    imageStore(voxel_radiance, write_pos, light);
+    imageStore(voxel_radiance, writePos, albedo);
 }

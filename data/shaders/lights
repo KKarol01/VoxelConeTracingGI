@@ -1,0 +1,14 @@
+struct PointLight {
+    vec3 pos;
+    vec4 col;
+    vec3 att; // [const, lin, quad, _]
+};
+
+struct DirectionLight {
+    vec3 dir;
+    vec4 col;
+};
+
+vec3 calc_dir_light(const DirectionLight l, const vec3 n) {
+    return max(0.0, dot(-l.dir, n)) * l.col.rgb * l.col.a;
+}

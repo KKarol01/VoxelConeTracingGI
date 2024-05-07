@@ -155,10 +155,10 @@ Pipeline PipelineBuilder::build_graphics(std::string_view label) {
         {}, color_attachment_formats, depth_attachment_format
     };
 
-    // vk::PipelineRasterizationConservativeStateCreateInfoEXT conservative_rasterization = {
-    //     {}, vk::ConservativeRasterizationModeEXT::eOverestimate
-    // };
-    // RasterizationState_.pNext = &conservative_rasterization;
+    vk::PipelineRasterizationConservativeStateCreateInfoEXT conservative_rasterization = {
+        {}, vk::ConservativeRasterizationModeEXT::eOverestimate
+    };
+    RasterizationState_.pNext = &conservative_rasterization;
 
     vk::GraphicsPipelineCreateInfo info{
         {},

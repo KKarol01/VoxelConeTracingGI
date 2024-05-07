@@ -14,6 +14,25 @@
 class RenderGraph;
 class RendererAllocator;
 
+struct PointLight {
+    alignas(16) glm::vec3 pos;
+    alignas(16) glm::vec4 col;
+    alignas(16) glm::vec3 att;
+};
+
+struct DirectionLight {
+    alignas(16) glm::vec3 dir;
+    alignas(16) glm::vec4 col;
+};
+
+struct LightsUBO {
+    u32 num_points{0}, num_dirs{1};
+    PointLight points[8];
+    DirectionLight dirs[8] = {
+        {glm::normalize(glm::vec3{0.0, -0.877, 0.48}), glm::vec4{238.0f/255.0f, 228.0f/255.0f, 203.0f/255.0f, 3.5f}}
+    };
+};
+
 struct GpuMesh {
     const Mesh* mesh;
     u32 vertex_offset, vertex_count;
@@ -52,6 +71,9 @@ struct GlobalIlluminationSettings {
     float diffuse_cone_aperture{0.25};
     float specular_cone_aperture{0.08f};
     float occlusion_cone_aperture{0.08f};
+    float aoAlpha{0.0f};
+    float aoFalloff{800.0f};
+    float traceShadowHit{1.0f};
     int merge_voxels_calc_occlusion{1};
     int lighting_use_merge_voxels_occlusion{1};
     int lighting_calc_occlusion{1};
@@ -129,8 +151,9 @@ public:
     DescriptorSet global_set, material_set, imgui_set;
     Texture3D voxel_albedo, voxel_normal, voxel_radiance;
     Texture2D depth_texture;
-    Buffer global_buffer, gi_settings_buffer;
+    Buffer global_buffer, gi_settings_buffer, light_settings_buffer;
     GlobalIlluminationSettings* gi_settings;
+    LightsUBO* light_settings;
 
     Pipeline pp_default_lit;
     Pipeline pp_voxelize;

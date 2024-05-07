@@ -489,7 +489,8 @@ bool Renderer::initialize_frame_resources() {
     global_set = descriptor_allocator->allocate("global_set", DescriptorLayout{{}, {
         DescriptorBinding{1, vk::DescriptorType::eUniformBuffer},
         DescriptorBinding{1, vk::DescriptorType::eUniformBuffer},
-    }, {}, 2, false}, 8);
+        DescriptorBinding{1, vk::DescriptorType::eUniformBuffer},
+    }, {}, 3, false}, 8);
     imgui_set = descriptor_allocator->allocate("imgui_set", DescriptorLayout{{}, {
         DescriptorBinding{1, vk::DescriptorType::eCombinedImageSampler}
     }, {}, 1, false}, 8);
@@ -497,6 +498,10 @@ bool Renderer::initialize_frame_resources() {
     gi_settings_buffer = Buffer{"gi_settings_buffer", vk::BufferUsageFlagBits::eUniformBuffer, true, sizeof(GlobalIlluminationSettings)};
     new(gi_settings_buffer->data) GlobalIlluminationSettings{};
     gi_settings = static_cast<GlobalIlluminationSettings*>(gi_settings_buffer->data);
+
+    light_settings_buffer = Buffer{"light_settings_buffer", vk::BufferUsageFlagBits::eUniformBuffer, true, sizeof(LightsUBO)};
+    new(light_settings_buffer->data) LightsUBO{};
+    light_settings = static_cast<LightsUBO*>(light_settings_buffer->data);
 
     return true;
 }
@@ -506,6 +511,7 @@ bool Renderer::initialize_imgui() {
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO(); (void)io;
+    io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
 
     ImGui::StyleColorsDark();
 
@@ -518,10 +524,7 @@ bool Renderer::initialize_imgui() {
         vk::DescriptorPoolSize{vk::DescriptorType::eCombinedImageSampler, 4u}
     };
 
-    auto pool = device.createDescriptorPool(vk::DescriptorPoolCreateInfo{
-        {}, 4,     sizes
-        });
-
+    auto pool = device.createDescriptorPool(vk::DescriptorPoolCreateInfo{{}, 4, sizes});
     ImGui_ImplVulkan_InitInfo init_info = {};
     init_info.Instance = instance;
     init_info.PhysicalDevice = physical_device;
@@ -610,7 +613,7 @@ bool Renderer::initialize_render_passes() {
 
     glm::mat4 global_buffer_size[2];
     global_buffer = Buffer{"global_ubo", vk::BufferUsageFlagBits::eUniformBuffer, true, std::as_bytes(std::span{global_buffer_size})};
-    global_set.update(0, 0, {{&global_buffer}, {&gi_settings_buffer}});
+    global_set.update(0, 0, {{&global_buffer}, {&gi_settings_buffer}, {&light_settings_buffer}});
 
     #if 1
     const auto res_voxel_albedo = render_graph->add_resource(RGResource{"voxel_albedo", voxel_albedo});
@@ -812,10 +815,32 @@ bool Renderer::initialize_render_passes() {
                 ImGui::SliderFloat("trace_distance",                   &gi_settings->trace_distance, 0.0f, 512.0f);
                 ImGui::SliderFloat("diffuse_cone_aperture",            &gi_settings->diffuse_cone_aperture, 0.0f, glm::pi<float>());
                 ImGui::SliderFloat("specular_cone_aperture",           &gi_settings->specular_cone_aperture, 0.0f, glm::pi<float>());
-                ImGui::SliderFloat("occlusion_cone_aperture",          &gi_settings->occlusion_cone_aperture, 0.0f, glm::pi<float>());
+                ImGui::SliderFloat("occlusion_cone_aperture",          &gi_settings->occlusion_cone_aperture, 0.001f, glm::pi<float>());
+                ImGui::SliderFloat("aoalpha",          &gi_settings->aoAlpha, 0.0f, 2.0f);
+                ImGui::SliderFloat("aofallof",          &gi_settings->aoFalloff, 0.0f, 1000.0f);
+                ImGui::SliderFloat("traceshadowhit",          &gi_settings->traceShadowHit, 0.0f, 100.0f);
                 ImGui::Checkbox("merge_voxels_calc_occlusion",         reinterpret_cast<bool*>(&gi_settings->merge_voxels_calc_occlusion));
                 ImGui::Checkbox("lighting_use_merge_voxels_occlusion", reinterpret_cast<bool*>(&gi_settings->lighting_use_merge_voxels_occlusion));
                 ImGui::Checkbox("lighting_calc_occlusion",             reinterpret_cast<bool*>(&gi_settings->lighting_calc_occlusion));
+            }   
+            if(ImGui::CollapsingHeader("light_settings", ImGuiTreeNodeFlags_DefaultOpen)) {
+                for(u32 i=0; i<light_settings->num_dirs; ++i) {
+                    const auto dir = std::format("dir_light_{}", i+1);
+                    const auto col = std::format("col_light_{}", i+1);
+                    const auto str = std::format("str_ligh_{}", i+1);
+                    ImGui::PushID(i);
+                    if(ImGui::SliderFloat3(dir.c_str(), &light_settings->dirs[i].dir.x, -1.0f, 1.0f)) {
+                        light_settings->dirs[i].dir = glm::normalize(light_settings->dirs[i].dir);
+                    }
+                    ImGui::ColorEdit3(col.c_str(), &light_settings->dirs[i].col.x);
+                    ImGui::SliderFloat(str.c_str(), &light_settings->dirs[i].col.w, 0.0f, 10.0f);
+                    ImGui::PopID();
+                }
+            }
+            if(ImGui::CollapsingHeader("Other", ImGuiTreeNodeFlags_DefaultOpen)) {
+                if(ImGui::Button("Recompile shaders")) {
+                    initialize_render_passes();
+                }
             }
             ImGui::End();
 
